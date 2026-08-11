@@ -64,13 +64,13 @@ def classify_market_regime():
 
         if cur_vix > 22.0 or vix_5d_pct > 15.0:
             regime = "RISK_DRIVEN"
-            desc = f"High Market Volatility (VIX: {cur_vix:.2f}, 5d Slope: {vix_5d_pct:+.1f}%). Safe-haven flows override fundamentals."
+            desc = f"High Volatility Environment (VIX: {cur_vix:.2f}, 5d Slope: {vix_5d_pct:+.1f}%). Safe-haven flows and sentiment override fundamentals."
         elif us10y_daily_move > 0.05: # >5 bps move on 10Y yields
             regime = "RATE_DRIVEN"
             desc = f"Active Yield Movements (US10Y at {cur_10y:.2f}%). Real interest rate differentials drive capital flows."
         else:
             regime = "GROWTH_DIVERGENCE"
-            desc = f"Calm Volatility Environment (VIX: {cur_vix:.2f}). Relative economic performance and PMI expectations drive pairs."
+            desc = f"Calm Volatility Environment (VIX: {cur_vix:.2f}). Relative economic performance and PMI expectations drive asset pairs."
 
         return regime, desc, cur_vix, cur_10y
     except Exception as e:
@@ -251,7 +251,7 @@ def generate_banner(mode: str, regime: str) -> io.BytesIO:
 # 5. DISPATCH TO TELEGRAM
 # ==========================================
 def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.BytesIO):
-    """Posts image banner and HTML report to Telegram channel."""
+    """Posts image banner and HTML report directly to Telegram channel."""
     photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
     files = {'photo': ('banner.png', image_buf, 'image/png')}
     
@@ -283,7 +283,6 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
 def main():
     parser = argparse.ArgumentParser(description="Apex Macro Desk 10-Component Decision System")
     parser.add_argument("--mode", type=str, default="london", choices=["london", "ny", "eod", "update"], help="Session mode")
-    parser.add_argument("--dry-run", action="store_true", help="Print report without sending to Telegram")
     args = parser.parse_args()
 
     gemini_key = os.getenv("GEMINI_API_KEY")
@@ -293,6 +292,10 @@ def main():
 
     if not gemini_key:
         print("ERROR: GEMINI_API_KEY environment variable is not set.")
+        sys.exit(1)
+
+    if not bot_token or not chat_id:
+        print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables must be set.")
         sys.exit(1)
 
     print(f"🚀 Launching Apex Macro Desk Pipeline [{args.mode.upper()} SESSION]...")
@@ -313,29 +316,17 @@ def main():
     print("🤖 Synthesizing Institutional Macro Report with Gemini...")
     report_text = generate_report(args.mode, calendar_data, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
 
-    if args.dry_run:
-        print("\n================ [ DRY RUN REPORT OUTPUT ] ================\n")
-        print(report_text)
-        print("\n===========================================================\n")
-        
-        summary_file = os.getenv("GITHUB_STEP_SUMMARY")
-        if summary_file:
-            with open(summary_file, "a") as f:
-                f.write(f"### Dry-Run Output [{args.mode.upper()}]\n```html\n{report_text}\n```\n")
+    print("🖼️ Generating Session Banner Graphic...")
+    banner_buf = generate_banner(args.mode, regime)
+
+    print("📡 Broadcasting Session Intelligence directly to Telegram...")
+    success = send_telegram(bot_token, chat_id, report_text, banner_buf)
+    
+    if success:
+        print("✅ Report broadcasted successfully to Telegram!")
     else:
-        if not bot_token or not chat_id:
-            print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set for live posting.")
-            sys.exit(1)
-
-        print("🖼️ Generating Session Banner...")
-        banner_buf = generate_banner(args.mode, regime)
-
-        print("📡 Broadcasting Session Intelligence to Telegram...")
-        success = send_telegram(bot_token, chat_id, report_text, banner_buf)
-        if success:
-            print("✅ Broadcast sent successfully!")
-        else:
-            print("❌ Broadcast failed. Verify bot permissions and HTML tag formatting.")
+        print("❌ Broadcast failed. Check Telegram credentials or API payload limits.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
