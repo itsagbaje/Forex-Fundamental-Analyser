@@ -2,6 +2,7 @@ import os
 import sys
 import argparse
 import io
+import re
 import requests
 import datetime
 import yfinance as yf
@@ -247,31 +248,53 @@ def generate_banner(mode: str, regime: str) -> io.BytesIO:
     return buf
 
 # ==========================================
-# 5. DISPATCH TO TELEGRAM
+# 5. ROBUST TELEGRAM DISPATCH
 # ==========================================
 def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.BytesIO):
     photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
-    files = {'photo': ('banner.png', image_buf, 'image/png')}
+    msg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     
-    if len(message) > 1000:
-        requests.post(photo_url, data={'chat_id': chat_id}, files=files, timeout=15)
-        msg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    # 1. Send banner photo
+    files = {'photo': ('banner.png', image_buf, 'image/png')}
+    try:
+        photo_res = requests.post(photo_url, data={'chat_id': chat_id}, files=files, timeout=15)
+        if photo_res.status_code != 200:
+            print(f"⚠️ Banner upload warning ({photo_res.status_code}): {photo_res.text}")
+    except Exception as e:
+        print(f"⚠️ Photo dispatch exception: {e}")
+
+    # 2. Chunk message to prevent exceeding Telegram's 4,096 char limit
+    MAX_LEN = 4000
+    chunks = [message[i:i+MAX_LEN] for i in range(0, len(message), MAX_LEN)]
+    
+    overall_success = True
+    for idx, chunk in enumerate(chunks):
         payload = {
             'chat_id': chat_id,
-            'text': message,
+            'text': chunk,
             'parse_mode': 'HTML',
             'disable_web_page_preview': True
         }
         res = requests.post(msg_url, json=payload, timeout=15)
-    else:
-        payload = {
-            'chat_id': chat_id,
-            'caption': message,
-            'parse_mode': 'HTML'
-        }
-        res = requests.post(photo_url, data=payload, files=files, timeout=15)
         
-    return res.status_code == 200
+        # Fallback to plain text if Telegram rejects broken HTML syntax
+        if res.status_code != 200:
+            print(f"⚠️ HTML parsing failed ({res.status_code}): {res.text}. Retrying with plain text fallback...")
+            plain_chunk = re.sub(r'<[^>]*>', '', chunk)
+            payload_plain = {
+                'chat_id': chat_id,
+                'text': plain_chunk,
+                'disable_web_page_preview': True
+            }
+            res = requests.post(msg_url, json=payload_plain, timeout=15)
+            
+        if res.status_code == 200:
+            print(f"   ↳ Sent message chunk {idx + 1}/{len(chunks)}")
+        else:
+            print(f"❌ Telegram API Error ({res.status_code}): {res.text}")
+            overall_success = False
+
+    return overall_success
 
 # ==========================================
 # 6. CLI EXECUTION ENTRY POINT
