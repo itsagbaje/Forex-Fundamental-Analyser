@@ -12,6 +12,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# Environment Variable Guard Check
+if not GEMINI_API_KEY:
+    print("[X] Critical Error: GEMINI_API_KEY environment variable is missing or empty.")
+    print("Please verify your GitHub Repository Secrets name matches 'GEMINI_API_KEY'.")
+    sys.exit(1)
+
 WATCHLIST = [
     "EURUSD", "GBPUSD", "USDCHF", "USDCAD", "GBPJPY", "EURJPY",
     "JP225", "NAS100", "SP500", "NZDUSD", "AUDUSD", "EURCAD",
