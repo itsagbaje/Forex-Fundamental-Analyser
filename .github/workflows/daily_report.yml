@@ -21,11 +21,6 @@ on:
           - ny
           - eod
           - update
-      dry_run:
-        description: 'Dry Run (Test without posting to Telegram)'
-        required: true
-        default: false
-        type: boolean
 
 jobs:
   run-pipeline:
@@ -50,11 +45,6 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "MODE=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
-            if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
-              echo "DRY_RUN=--dry-run" >> $GITHUB_OUTPUT
-            else
-              echo "DRY_RUN=" >> $GITHUB_OUTPUT
-            fi
           else
             HOUR=$(date -u +%H)
             if [ "$HOUR" -eq "7" ]; then
@@ -64,7 +54,6 @@ jobs:
             else
               echo "MODE=eod" >> $GITHUB_OUTPUT
             fi
-            echo "DRY_RUN=" >> $GITHUB_OUTPUT
           fi
 
       - name: Execute Pipeline
@@ -74,4 +63,4 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
         run: |
-          python main.py --mode ${{ steps.session.outputs.MODE }} ${{ steps.session.outputs.DRY_RUN }}
+          python main.py --mode ${{ steps.session.outputs.MODE }}
