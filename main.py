@@ -99,112 +99,9 @@ def fetch_intermarket_data():
     return " | ".join(lines) if lines else "Key indicators updating..."
 
 # ==========================================
-# 3. FINNHUB ECONOMIC CALENDAR INTEGRATION
+# 3. AI MACRO ENGINE & PROMPT SYNTHESIS
 # ==========================================
-def fetch_economic_calendar(api_key, active_mode="all"):
-    if not api_key:
-        return "ℹ️ <i>Finnhub API key missing. Relying on yield trends.</i>", False
-
-    today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-    url = f"https://finnhub.io/api/v1/economic-calendar?from={today}&to={today}&token={api_key}"
-
-    country_to_currency = {
-        "US": "USD", "EU": "EUR", "DE": "EUR", "FR": "EUR", "IT": "EUR", "ES": "EUR",
-        "GB": "GBP", "UK": "GBP", "JP": "JPY", "CA": "CAD", 
-        "AU": "AUD", "CH": "CHF", "NZ": "NZD"
-    }
-
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code != 200:
-            return f"ℹ️ <i>Calendar fetch unavailable (Status {res.status_code}).</i>", False
-
-        data = res.json()
-        events = data.get("economicCalendar", [])
-
-        if not events:
-            return "No high or medium impact economic releases scheduled for today.", False
-
-        parsed_events = []
-        has_tier1 = False
-
-        for ev in events:
-            impact_raw = str(ev.get("impact", "")).capitalize()
-            if impact_raw not in ["High", "Medium"]:
-                continue
-
-            country = str(ev.get("country", "")).upper()
-            currency = country_to_currency.get(country, country)
-            if currency not in {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD"}:
-                continue
-
-            impact_score = 1 if impact_raw == "High" else 2
-            if impact_raw == "High":
-                has_tier1 = True
-
-            time_raw = str(ev.get("time", ""))
-            time_str = "TBD"
-            hour = 12
-
-            if time_raw:
-                try:
-                    dt = datetime.datetime.strptime(time_raw[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
-                    time_str = dt.strftime("%H:%M UTC")
-                    hour = dt.hour
-                except ValueError:
-                    time_str = "TBD"
-
-            if 0 <= hour < 7:
-                session_name = "🌏 ASIAN SESSION (00:00 - 07:00 UTC)"
-            elif 7 <= hour < 13:
-                session_name = "🇬🇧 LONDON SESSION (07:00 - 13:00 UTC)"
-            else:
-                session_name = "🇺🇸 NEW YORK SESSION (13:00 - 21:00 UTC)"
-
-            parsed_events.append({
-                "currency": currency,
-                "event": ev.get("event", "Economic Event"),
-                "impact": impact_raw,
-                "impact_score": impact_score,
-                "time_str": time_str,
-                "hour": hour,
-                "estimate": ev.get("estimate", "N/A"),
-                "previous": ev.get("prev", "N/A"),
-                "session_name": session_name
-            })
-
-        if not parsed_events:
-            return "No high or medium impact economic releases scheduled for today.", False
-
-        parsed_events.sort(key=lambda x: (x["hour"], x["impact_score"]))
-
-        grouped = {}
-        for ev in parsed_events:
-            s_name = ev["session_name"]
-            if s_name not in grouped:
-                grouped[s_name] = []
-            grouped[s_name].append(ev)
-
-        output_lines = []
-        for session_title, ev_list in grouped.items():
-            output_lines.append(f"<b>{session_title}</b>")
-            for e in ev_list:
-                icon = "🔴 HIGH" if e["impact"] == "High" else "🟡 MED"
-                output_lines.append(
-                    f"• [<code>{e['time_str']}</code>] {icon} <b>[{e['currency']}] {e['event']}</b> "
-                    f"(Est: <code>{e['estimate']}</code> | Prev: <code>{e['previous']}</code>)"
-                )
-            output_lines.append("")
-
-        return "\n".join(output_lines).strip(), has_tier1
-
-    except Exception as e:
-        return f"ℹ️ <i>Calendar processing bypassed ({str(e)}).</i>", False
-
-# ==========================================
-# 4. AI MACRO ENGINE & PROMPT SYNTHESIS
-# ==========================================
-def generate_report(mode: str, calendar_data: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str) -> str:
+def generate_report(mode: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str) -> str:
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
@@ -222,8 +119,6 @@ SYSTEM INPUT DATA:
 {ohlc_prices}
 - **INTERMARKET INDICATORS:**
 {intermarket_data}
-- **TIMED SESSION NEWS DATA:**
-{calendar_data}
 
 REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
@@ -242,16 +137,11 @@ REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
 • <b>Market Sentiment & Volatility Dynamics:</b> <i>2 plain English sentences assessing fear levels, risk-on/risk-off sentiment, and VIX status.</i>
 
-• <b>Institutional Order Flow & Positioning:</b> <i>2 plain English sentences on big money movements and scheduled news event risks for today.</i>
+• <b>Institutional Order Flow & Positioning:</b> <i>2 plain English sentences on big money movements and order flows for today.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>2. 📅 SCHEDULED SESSION NEWS & VOLATILITY MAP</b>
-{calendar_data}
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>3. 🥇 MAJOR FOREX PAIRS & DXY</b>
+<b>2. 🥇 MAJOR FOREX PAIRS & DXY</b>
 (Evaluate ONLY these 7 assets: DXY, EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF)
 
 Format every single asset with double line spacing like this:
@@ -264,7 +154,7 @@ Format every single asset with double line spacing like this:
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>4. 📈 INDICES & COMMODITIES</b>
+<b>3. 📈 INDICES & COMMODITIES</b>
 (Evaluate ONLY these 5 assets: GOLD, SILVER, SP500, NAS100, GER40)
 
 Format each asset with space:
@@ -274,7 +164,7 @@ Format each asset with space:
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>5. 🪙 CRYPTO ASSETS</b>
+<b>4. 🪙 CRYPTO ASSETS</b>
 (Evaluate ONLY these 2 assets: BTCUSDT, ETHUSDT)
 
 Format each asset with space:
@@ -284,7 +174,7 @@ Format each asset with space:
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>6. 🎯 HIGH CONVICTION SETUPS</b>
+<b>5. 🎯 HIGH CONVICTION SETUPS</b>
 (Pick the 2-3 best trade setups where interest rates, risk sentiment, and institutional flows all point in the same direction)
 
 • <b>[ASSET TICKER] — [BUY / SELL]</b>
@@ -315,7 +205,7 @@ Format each asset with space:
     raise last_exception
 
 # ==========================================
-# 5. BANNER IMAGE GENERATOR
+# 4. BANNER IMAGE GENERATOR
 # ==========================================
 def generate_banner(mode: str, regime: str) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(8, 2.5), facecolor='#0D1117')
@@ -339,7 +229,7 @@ def generate_banner(mode: str, regime: str) -> io.BytesIO:
     return buf
 
 # ==========================================
-# 6. TELEGRAM DISPATCH WITH CHUNKING
+# 5. TELEGRAM DISPATCH WITH CHUNKING
 # ==========================================
 def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.BytesIO):
     photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
@@ -385,7 +275,7 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
     return overall_success
 
 # ==========================================
-# 7. CLI EXECUTION ENTRY POINT
+# 6. CLI EXECUTION ENTRY POINT
 # ==========================================
 def main():
     parser = argparse.ArgumentParser(description="Apex Macro Desk Decision System")
@@ -395,7 +285,6 @@ def main():
     gemini_key = os.getenv("GEMINI_API_KEY")
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    finnhub_key = os.getenv("FINNHUB_API_KEY", "")
 
     if not gemini_key:
         print("ERROR: GEMINI_API_KEY environment variable is not set.")
@@ -419,11 +308,9 @@ def main():
 
     for current_mode in modes_to_run:
         print(f"\n🚀 Processing [{current_mode.upper()} SESSION]...")
-        print("📅 Fetching Finnhub Session News Events...")
-        calendar_data, has_tier1 = fetch_economic_calendar(finnhub_key, current_mode)
 
         print("🤖 Synthesizing Institutional Macro Report with Gemini...")
-        report_text = generate_report(current_mode, calendar_data, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
+        report_text = generate_report(current_mode, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
 
         print("🖼️ Generating Session Banner Graphic...")
         banner_buf = generate_banner(current_mode, regime)
