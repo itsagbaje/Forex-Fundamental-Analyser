@@ -21,11 +21,28 @@ if not GEMINI_API_KEY:
     print("[X] Critical Error: GEMINI_API_KEY missing.")
     sys.exit(1)
 
-WATCHLIST = [
-    "EURUSD", "GBPUSD", "USDCHF", "USDCAD", "GBPJPY", "EURJPY",
-    "JP225", "NAS100", "SP500", "NZDUSD", "AUDUSD", "EURCAD",
-    "GBPCAD", "GOLD", "SILVER", "GER40", "BTCUSD", "ETHUSD"
-]
+# Exact ticker mappings for all 18 watchlist assets
+WATCHLIST_TICKERS = {
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X",
+    "USDCHF": "USDCHF=X",
+    "USDCAD": "USDCAD=X",
+    "GBPJPY": "GBPJPY=X",
+    "EURJPY": "EURJPY=X",
+    "JP225": "^N225",
+    "NAS100": "^NDX",
+    "SP500": "^GSPC",
+    "NZDUSD": "NZDUSD=X",
+    "AUDUSD": "AUDUSD=X",
+    "EURCAD": "EURCAD=X",
+    "GBPCAD": "GBPCAD=X",
+    "GOLD": "XAUUSD=X",
+    "SILVER": "XAGUSD=X",
+    "GER40": "^GDAXI",
+    "BTCUSD": "BTC-USD",
+    "ETHUSD": "ETH-USD"
+}
+
 TARGET_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF"}
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -34,8 +51,8 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 # 2. DATA FETCHING MODULES
 # ==========================================
 def fetch_intermarket_data() -> str:
-    """Fetches real-time DXY, US10Y Yields, and Gold momentum via yfinance."""
-    symbols = {"US Dollar Index (DXY)": "DX=F", "US 10Y Yield": "^TNX", "Gold Futures": "GC=F"}
+    """Fetches real-time DXY and US10Y Yields via yfinance."""
+    symbols = {"US Dollar Index (DXY)": "DX=F", "US 10Y Yield": "^TNX"}
     summary = []
     
     for name, sym in symbols.items():
@@ -51,6 +68,31 @@ def fetch_intermarket_data() -> str:
             continue
             
     return "\n".join(summary) if summary else "Intermarket yield data currently unavailable."
+
+def fetch_watchlist_prices() -> str:
+    """Fetches real-time prices and 24h momentum for all 18 watchlist assets."""
+    summary = []
+    print("[*] Fetching live quotes for all 18 watchlist assets...")
+    
+    for name, sym in WATCHLIST_TICKERS.items():
+        try:
+            ticker = yf.Ticker(sym)
+            hist = ticker.history(period="2d")
+            if len(hist) >= 1:
+                curr = hist['Close'].iloc[-1]
+                if len(hist) >= 2:
+                    prev = hist['Close'].iloc[-2]
+                    pct = ((curr - prev) / prev) * 100
+                    fmt_price = f"{curr:.2f}" if curr > 10 else f"{curr:.5f}"
+                    summary.append(f"• {name}: {fmt_price} ({pct:+.2f}%)")
+                else:
+                    fmt_price = f"{curr:.2f}" if curr > 10 else f"{curr:.5f}"
+                    summary.append(f"• {name}: {fmt_price}")
+        except Exception as e:
+            print(f"[!] Warning: Could not fetch price for {name}: {e}")
+            continue
+            
+    return "\n".join(summary) if summary else "Watchlist live price data unavailable."
 
 def fetch_today_economic_events() -> str:
     """Fetches economic calendar from FMP API."""
@@ -105,7 +147,7 @@ def fetch_cot_positioning() -> str:
                 sentiment = "Net Long 🟢" if net > 0 else "Net Short 🔴"
                 summary.append(f"• {label}: {sentiment} ({net:+,d} contracts)")
 
-        return "\n".join(summary)
+        return "\n".join(summary) if summary else "CFTC positioning data bypassed."
     except Exception as err:
         return f"CFTC COT data fetch bypassed: {err}"
 
@@ -137,11 +179,12 @@ def generate_and_send_scorecard_image():
 # ==========================================
 # 4. REPORT GENERATION VIA GEMINI
 # ==========================================
-def generate_report(session_name: str, calendar_data: str, intermarket_data: str, cot_data: str) -> str:
+def generate_report(session_name: str, calendar_data: str, intermarket_data: str, watchlist_prices: str, cot_data: str) -> str:
     prompt = f"""
 You are an institutional macro strategist at Apex Macro Desk. Generate the **{session_name} Session Report**.
 
-Watchlist Assets: {", ".join(WATCHLIST)}
+LIVE REAL-TIME WATCHLIST SPOT PRICES:
+{watchlist_prices}
 
 REAL-TIME INTERMARKET YIELDS & DXY:
 {intermarket_data}
@@ -152,15 +195,16 @@ WEEKLY INSTITUTIONAL COT POSITIONING:
 LIVE ECONOMIC CALENDAR:
 {calendar_data}
 
-**STRICT FORMATTING RULES (TELEGRAM HTML):**
+**STRICT FORMATTING & ACCURACY RULES:**
 1. Use ONLY these valid HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
 2. Do NOT use markdown asterisks (*). EVERY <b> tag MUST have a corresponding </b> tag.
 3. Do NOT use raw '<' or '>' characters anywhere in the text (e.g., write 'below -5' instead of '< -5').
+4. **SPOT PRICE ANCHORING:** You MUST anchor all key execution levels, support/resistance references, and price comments strictly around the provided **LIVE REAL-TIME WATCHLIST SPOT PRICES**. Do NOT invent or estimate prices outside these real-time numbers.
 
 **REQUIRED SECTIONS:**
 1. <b>🏛️ {session_name.upper()} SESSION MACRO & YIELD DRIVERS</b>
 2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b> (List all 18 watchlist assets with signed scores and 1-word fundamental drivers)
-3. <b>🔥 TOP 5 TO 7 FOCUS ASSETS (FUNDAMENTAL CONFLUENCE)</b> (Identify specifically 5 to 7 high-conviction assets; state Pair, Bias, Fundamental Justification, Key Execution Zone)
+3. <b>🔥 TOP 5 TO 7 FOCUS ASSETS (FUNDAMENTAL CONFLUENCE)</b> (Identify specifically 5 to 7 high-conviction assets; state Pair, Bias, Fundamental Justification, Key Execution Zone anchored to live price)
 4. <b>🎯 TOP CONFLUENCE SETUPS</b>
 5. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
 """
@@ -201,10 +245,11 @@ if __name__ == "__main__":
         generate_and_send_scorecard_image()
         
         market_ctx = fetch_intermarket_data()
+        watchlist_ctx = fetch_watchlist_prices()
         cal_ctx = fetch_today_economic_events()
         cot_ctx = fetch_cot_positioning()
         
-        report = generate_report(session, cal_ctx, market_ctx, cot_ctx)
+        report = generate_report(session, cal_ctx, market_ctx, watchlist_ctx, cot_ctx)
         
         send_telegram_text(report)
         print("[✓] Apex Macro Report delivered successfully.")
