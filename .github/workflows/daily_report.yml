@@ -1,18 +1,11 @@
 name: Apex Macro Desk Intelligence
 
 on:
-  # Automated Cron Schedules (UTC Time)
   schedule:
-    # 🇬🇧 London Session Open: 06:30 UTC (Mon-Fri)
-    - cron: '30 6 * * 1-5'
-    
-    # 🇺🇸 New York Session Open: 12:30 UTC (Mon-Fri)
-    - cron: '30 12 * * 1-5'
-    
-    # 🌆 End of Day (EOD) Summary: 21:00 UTC (Mon-Fri)
-    - cron: '0 21 * * 1-5'
+    - cron: '30 6 * * 1-5'   # London Session Open (06:30 UTC)
+    - cron: '30 12 * * 1-5'  # New York Session Open (12:30 UTC)
+    - cron: '0 21 * * 1-5'   # EOD Summary (21:00 UTC)
 
-  # Manual Trigger from GitHub UI
   workflow_dispatch:
     inputs:
       mode:
@@ -52,9 +45,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
-          # Detect scheduled time and set session mode
           HOUR=$(date -u +%H)
           if [ "$HOUR" -eq "06" ] || [ "$HOUR" -eq "07" ]; then
             python main.py --mode london
@@ -70,6 +61,5 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
           python main.py --mode ${{ github.event.inputs.mode }}
