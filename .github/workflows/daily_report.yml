@@ -1,18 +1,22 @@
-name: Apex Macro Desk Session Pipeline
+name: Apex Macro Desk Intelligence
 
 on:
+  # Automated Cron Schedules (UTC Time)
   schedule:
-    # London Session (Scheduled for 07:00 UTC)
-    - cron: '0 7 * * 1-5'
-    # New York Session (Scheduled for 12:30 UTC)
+    # 🇬🇧 London Session Open: 06:30 UTC (Mon-Fri)
+    - cron: '30 6 * * 1-5'
+    
+    # 🇺🇸 New York Session Open: 12:30 UTC (Mon-Fri)
     - cron: '30 12 * * 1-5'
-    # End of Day / Asian Brief (Scheduled for 21:00 UTC)
+    
+    # 🌆 End of Day (EOD) Summary: 21:00 UTC (Mon-Fri)
     - cron: '0 21 * * 1-5'
-  
+
+  # Manual Trigger from GitHub UI
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Session Mode'
+        description: 'Session Mode to Run'
         required: true
         default: 'all'
         type: choice
@@ -24,49 +28,48 @@ on:
           - update
 
 jobs:
-  run-pipeline:
+  run-macro-report:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install google-genai yfinance requests matplotlib
+          pip install yfinance matplotlib google-genai requests
 
-      - name: Determine Session Mode with Buffer Windows
-        id: session
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "MODE=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
-          else
-            # Strip leading zeros for mathematical range check
-            HOUR=$(date -u +%H | sed 's/^0//')
-            
-            # London Window: 06:00 to 11:59 UTC (handles GitHub runner delays)
-            if [ "$HOUR" -ge 6 ] && [ "$HOUR" -lt 12 ]; then
-              echo "MODE=london" >> $GITHUB_OUTPUT
-            # NY Window: 12:00 to 20:59 UTC
-            elif [ "$HOUR" -ge 12 ] && [ "$HOUR" -lt 21 ]; then
-              echo "MODE=ny" >> $GITHUB_OUTPUT
-            # EOD Window: 21:00 to 05:59 UTC
-            else
-              echo "MODE=eod" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-      - name: Execute Pipeline
+      - name: Run Apex Macro Engine (Scheduled)
+        if: github.event_name == 'schedule'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
-          python main.py --mode ${{ steps.session.outputs.MODE }}
+          # Detect scheduled time and set session mode
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" -eq "06" ] || [ "$HOUR" -eq "07" ]; then
+            python main.py --mode london
+          elif [ "$HOUR" -eq "12" ] || [ "$HOUR" -eq "13" ]; then
+            python main.py --mode ny
+          else
+            python main.py --mode eod
+          fi
+
+      - name: Run Apex Macro Engine (Manual Dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python main.py --mode ${{ github.event.inputs.mode }}
