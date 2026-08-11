@@ -10,30 +10,27 @@ import matplotlib.pyplot as plt
 from google import genai
 
 # ==========================================
-# 1. ASSET WATCHLIST & CATEGORIZATION
+# 1. WATCHLIST (EXACT 14 TARGET ASSETS)
 # ==========================================
 WATCHLIST_TICKERS = {
-    # 🥇 Majors & Gold
+    # 🥇 Major Forex Pairs & Dollar Index
+    "DXY": "DX-Y.NYB",
     "EURUSD": "EURUSD=X",
     "GBPUSD": "GBPUSD=X",
     "AUDUSD": "AUDUSD=X",
     "NZDUSD": "NZDUSD=X",
     "USDCAD": "USDCAD=X",
     "USDCHF": "USDCHF=X",
+    # 🪙 Commodities
     "GOLD": "GC=F",
-    # 🪙 Crypto Assets
-    "BTCUSD": "BTC-USD",
-    "ETHUSD": "ETH-USD",
-    # 📈 Crosses & Indices
-    "GBPJPY": "GBPJPY=X",
-    "EURJPY": "EURJPY=X",
-    "EURCAD": "EURCAD=X",
-    "GBPCAD": "GBPCAD=X",
     "SILVER": "SI=F",
-    "GER40": "^GDAXI",
-    "NAS100": "NQ=F",
+    # 📈 Major Equity Indices
     "SP500": "ES=F",
-    "JP225": "^N225"
+    "NAS100": "NQ=F",
+    "GER40": "^GDAXI",
+    # 🪙 Crypto
+    "BTCUSDT": "BTC-USD",
+    "ETHUSDT": "ETH-USD"
 }
 
 INTERMARKET_TICKERS = {
@@ -60,17 +57,17 @@ def classify_market_regime():
 
         if cur_vix > 22.0 or vix_5d_pct > 15.0:
             regime = "RISK_DRIVEN"
-            desc = f"High Volatility Environment (VIX: {cur_vix:.2f}, 5d Slope: {vix_5d_pct:+.1f}%). Safe-haven flows and sentiment override fundamentals."
+            desc = f"Fear & Volatility High (VIX: {cur_vix:.2f}). Safe-haven assets like Gold and USD dominate."
         elif us10y_daily_move > 0.05:
             regime = "RATE_DRIVEN"
-            desc = f"Active Yield Movements (US10Y at {cur_10y:.2f}%). Real interest rate differentials drive capital flows."
+            desc = f"Yield Shifts Active (US 10-Year Bond Yield at {cur_10y:.2f}%). Interest rate gaps drive money flows."
         else:
             regime = "GROWTH_DIVERGENCE"
-            desc = f"Calm Volatility Environment (VIX: {cur_vix:.2f}). Relative economic performance and PMI expectations drive asset pairs."
+            desc = f"Calm Market (VIX: {cur_vix:.2f}). Economic health and performance gaps guide asset direction."
 
         return regime, desc, cur_vix, cur_10y
     except Exception as e:
-        return "RATE_DRIVEN", f"Default fallback regime (Data error: {str(e)})", 18.0, 4.25
+        return "RATE_DRIVEN", f"Standard market environment (Data backup: {str(e)})", 18.0, 4.25
 
 def fetch_market_data():
     price_lines = []
@@ -82,11 +79,11 @@ def fetch_market_data():
                 latest_price = data[ticker].dropna().iloc[-1]
                 prev_price = data[ticker].dropna().iloc[-2] if len(data[ticker].dropna()) > 1 else latest_price
                 change_pct = ((latest_price - prev_price) / prev_price) * 100
-                price_lines.append(f"• {name}: Price = {latest_price:.4f} (24h: {change_pct:+.2f}%)")
+                price_lines.append(f"• {name}: Price = {latest_price:.4f} (24h Change: {change_pct:+.2f}%)")
             else:
-                price_lines.append(f"• {name}: Live Price unavailable")
+                price_lines.append(f"• {name}: Price updating...")
     except Exception as e:
-        price_lines.append(f"Error fetching prices: {str(e)}")
+        price_lines.append(f"Price fetch issue: {str(e)}")
     return "\n".join(price_lines)
 
 def fetch_intermarket_data():
@@ -96,109 +93,201 @@ def fetch_intermarket_data():
         for name, ticker in INTERMARKET_TICKERS.items():
             if ticker in data and not data[ticker].dropna().empty:
                 val = data[ticker].dropna().iloc[-1]
-                lines.append(f"{name}: {val:.3f}")
+                lines.append(f"{name}: {val:.2f}")
     except Exception as e:
-        lines.append(f"Intermarket data fetch error: {str(e)}")
-    return " | ".join(lines) if lines else "DXY & Yields temporarily unavailable"
-
-def fetch_economic_calendar(api_key):
-    if not api_key:
-        return "Economic calendar API key missing. Operating on intermarket yields.", False
-    
-    today = datetime.date.today().strftime("%Y-%m-%d")
-    url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today}&to={today}&apikey={api_key}"
-    tier1_keywords = ["Interest Rate", "Fed", "ECB", "BOE", "BOJ", "CPI", "Inflation", "Non Farm", "NFP", "GDP"]
-    has_tier1_today = False
-    
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            events = res.json()
-            high_impact = [e for e in events if e.get("impact") in ["High", "Medium"] and e.get("currency") in ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD"]]
-            if not high_impact:
-                return "No Tier 1 or Tier 2 economic events scheduled today.", False
-            
-            tier1_lines, tier2_lines = [], []
-            for ev in high_impact[:8]:
-                ev_name = ev.get('event', '')
-                is_t1 = any(kw.lower() in ev_name.lower() for kw in tier1_keywords) or ev.get('impact') == 'High'
-                line = f"• [{ev.get('currency')}] {ev_name} (Est: {ev.get('estimate', 'N/A')}, Prev: {ev.get('previous', 'N/A')})"
-                if is_t1:
-                    tier1_lines.append(line)
-                    has_tier1_today = True
-                else:
-                    tier2_lines.append(line)
-            
-            output = "<b>TIER 1 EVENT RISKS TODAY:</b>\n" + ("\n".join(tier1_lines) if tier1_lines else "None")
-            output += "\n\n<b>TIER 2 SECONDARY DATA:</b>\n" + ("\n".join(tier2_lines) if tier2_lines else "None")
-            return output, has_tier1_today
-    except Exception as e:
-        return f"Calendar fetch failed: {str(e)}", False
-    return "No major calendar events available.", False
+        lines.append(f"Intermarket fetch issue: {str(e)}")
+    return " | ".join(lines) if lines else "Key indicators updating..."
 
 # ==========================================
-# 3. AI MACRO ENGINE & PROMPT SYNTHESIS
+# 3. SESSION-ALIGNED & VOLATILITY-SORTED NEWS
+# ==========================================
+def fetch_economic_calendar(api_key, active_mode="all"):
+    if not api_key:
+        return "Economic calendar API key missing. Relying on yield trends.", False
+
+    today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today}&to={today}&apikey={api_key}"
+    relevant_currencies = {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD"}
+
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code != 200:
+            return f"Calendar fetch failed (Status {res.status_code})", False
+
+        events = res.json()
+        filtered_events = [
+            e for e in events
+            if e.get("impact") in ["High", "Medium"] and e.get("currency") in relevant_currencies
+        ]
+
+        if not filtered_events:
+            return "No high or medium impact economic releases scheduled for today.", False
+
+        parsed_events = []
+        has_tier1 = False
+
+        for ev in filtered_events:
+            impact_raw = ev.get("impact", "Medium")
+            impact_score = 1 if impact_raw == "High" else 2
+            if impact_raw == "High":
+                has_tier1 = True
+
+            date_str = ev.get("date", "")
+            time_str = "TBD"
+            hour = 12
+
+            if date_str:
+                try:
+                    dt = datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                    time_str = dt.strftime("%H:%M UTC")
+                    hour = dt.hour
+                except ValueError:
+                    time_str = "TBD"
+
+            if 0 <= hour < 7:
+                session_name = "🌏 ASIAN SESSION (00:00 - 07:00 UTC)"
+                session_code = "asia"
+            elif 7 <= hour < 13:
+                session_name = "🇬🇧 LONDON SESSION (07:00 - 13:00 UTC)"
+                session_code = "london"
+            else:
+                session_name = "🇺🇸 NEW YORK SESSION (13:00 - 21:00 UTC)"
+                session_code = "ny"
+
+            parsed_events.append({
+                "currency": ev.get("currency"),
+                "event": ev.get("event"),
+                "impact": impact_raw,
+                "impact_score": impact_score,
+                "time_str": time_str,
+                "hour": hour,
+                "estimate": ev.get("estimate", "N/A"),
+                "previous": ev.get("previous", "N/A"),
+                "session_name": session_name,
+                "session_code": session_code
+            })
+
+        parsed_events.sort(key=lambda x: (x["hour"], x["impact_score"]))
+
+        grouped = {}
+        for ev in parsed_events:
+            s_name = ev["session_name"]
+            if s_name not in grouped:
+                grouped[s_name] = []
+            grouped[s_name].append(ev)
+
+        output_lines = []
+        for session_title, ev_list in grouped.items():
+            output_lines.append(f"<b>{session_title}</b>")
+            for e in ev_list:
+                icon = "🔴 HIGH" if e["impact"] == "High" else "🟡 MED"
+                output_lines.append(
+                    f"• [<code>{e['time_str']}</code>] {icon} <b>[{e['currency']}] {e['event']}</b> "
+                    f"(Est: <code>{e['estimate']}</code> | Prev: <code>{e['previous']}</code>)"
+                )
+            output_lines.append("")
+
+        return "\n".join(output_lines).strip(), has_tier1
+
+    except Exception as e:
+        return f"Calendar processing issue: {str(e)}", False
+
+# ==========================================
+# 4. AI MACRO ENGINE & PROMPT SYNTHESIS
 # ==========================================
 def generate_report(mode: str, calendar_data: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str) -> str:
     client = genai.Client(api_key=api_key)
-    
-    prompt = f"""
-You are the Lead Macro Strategist at Apex Macro Desk. Generate an educational, institutional-grade **{mode.upper()} Session Intelligence Report**.
 
-SYSTEM ENVIRONMENT & DECISION ENGINE PARAMETERS:
-- **CURRENT MARKET REGIME (Component 8):** {regime}
-- **REGIME CONTEXT:** {regime_desc}
-- **LIVE MARKET PRICES (ALL 18 ASSETS):**
+    prompt = f"""
+You are the Chief Market Analyst at Apex Macro Desk. Create an easy-to-read, beginner-friendly **{mode.upper()} SESSION MARKET REPORT**.
+
+WRITING & FORMATTING RULES:
+1. **SIMPLE LANGUAGE:** Explain concepts in plain, clear everyday English. Avoid Wall Street jargon.
+2. **VISUAL SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections, paragraphs, and individual asset breakdowns for mobile screen readability.
+3. **HTML STYLING:** Use <b>BOLD</b> for titles and tickers, <i>italics</i> for explanations, and <code>code tags</code> for prices/times. Do NOT use markdown asterisks (`*`) or unescaped `<` or `>` symbols.
+4. **EXPLICIT 10-COMPONENT INTEGRATION:**
+   - Component 1: Rate Differentials
+   - Component 2: Growth Differentials
+   - Component 3: Central Bank Stance
+   - Component 4: Active Risk Regime
+   - Component 5: Institutional Order Flow
+   - Component 6: Market Sentiment / VIX
+   - Component 7: Scheduled News Risks
+   - Component 8: Volatility Regime
+   - Component 9: Relative Divergence Score
+   - Component 10: High Conviction Alignment Rule
+
+SYSTEM INPUT DATA:
+- **ACTIVE REGIME (Comp 8):** {regime} ({regime_desc})
+- **LIVE PRICES (14 TARGET ASSETS):**
 {ohlc_prices}
-- **INTERMARKET YIELDS & VOLATILITY:**
+- **INTERMARKET INDICATORS:**
 {intermarket_data}
-- **EVENT RISK HIERARCHY (Component 7):**
+- **TIMED & SESSION-GROUPED EVENT RISK (Comp 7):**
 {calendar_data}
 
-**10-COMPONENT MACRO FRAMEWORK EVALUATION INSTRUCTIONS:**
-1. **RATE DIFFERENTIALS (Component 1):** Evaluate real rate gaps (nominal yield minus inflation) between currency pairs.
-2. **GROWTH DIFFERENTIALS (Component 2):** Assess relative GDP, PMI, and economic surprise index expectations.
-3. **CB REACTION FUNCTION (Component 3):** Gauge moves relative to what markets have priced in vs central bank stance.
-4. **RISK REGIME (Component 4):** Weight analysis based on active regime ({regime}). If RISK_DRIVEN, prioritize safe-haven flows; if RATE_DRIVEN, prioritize yield differentials.
-5. **POSITIONING & FLOWS (Component 5):** Factor institutional COT net bias where applicable.
-6. **RELATIVE SCORING RULE (Component 9):** Score factors as Currency A vs Currency B (relative divergence), never as absolute numbers.
-7. **CONVICTION RULE (Component 10):** Flag high conviction ONLY when Rates, Risk, and Flows agree. If factors conflict, assign ⚪ NEUTRAL / NO TRADE.
-
-**TONE & READABILITY:**
-- Explain the "WHY" behind every single bias in friendly, conversational, educational English (1-2 sentences per asset).
-- Use ONLY Telegram HTML tags: <b>bold</b>, <i>italics</i>, and <code>code</code>. Do NOT use markdown asterisks (*) or raw '<' and '>' characters.
-
-**REQUIRED OUTPUT STRUCTURE:**
+REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
 🏛️ <b>APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 
-1. <b>🌐 DECISION ENGINE & MARKET REGIME</b>
-• <b>Active Regime:</b> <i><b>{regime}</b> — {regime_desc}</i>
-• <b>Dollar & Rates:</b> <i>2 friendly sentences explaining DXY and Treasury yields in plain English.</i>
-• <b>Market Vibe:</b> <i>2 friendly sentences explaining overall risk sentiment.</i>
+<b>1. 🌐 DECISION ENGINE & 10-COMPONENT SNAPSHOT</b>
 
-2. <b>🥇 MAJORS & GOLD (PRIMARY FOCUS)</b>
-(Must evaluate ALL 7 assets in this exact order: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, GOLD)
-Format each asset as:
-<b>[TICKER]</b> [🟢 BULLISH / 🔴 BEARISH / ⚪ NEUTRAL] | Level: <code>[Live Price]</code>
-↳ <b>Why?</b> <i>1-2 friendly sentences explaining the exact macro reasoning (yield gaps, CB stance, risk flows) behind this bias.</i>
+• <b>Active Market Regime (Comp 8):</b> <i>{regime} — {regime_desc}</i>
 
-3. <b>🪙 CRYPTO ASSETS</b>
-(Must evaluate ALL 2 assets in this exact order: BTCUSD, ETHUSD)
-Format each same as above.
+• <b>Dollar & Interest Rates (Comp 1 & 3):</b> <i>2 simple sentences explaining USD strength/weakness and bond yield direction.</i>
 
-4. <b>📈 CROSSES & INDICES</b>
-(Must evaluate ALL 9 assets in this exact order: GBPJPY, EURJPY, EURCAD, GBPCAD, SILVER, GER40, NAS100, SP500, JP225)
-Format each same as above.
+• <b>Market Sentiment & Fear (Comp 4 & 6):</b> <i>2 simple sentences explaining market risk appetite.</i>
 
-5. <b>🎯 APEX SESSION TRIGGER MATRIX</b>
-• Identify the <b>3 Highest-Conviction Setups</b> where at least 3 independent framework factors align.
-Format as:
-  - <b>[ASSET]</b> [BUY/SELL]
-    • <b>Trigger Level:</b> <code>[Price]</code>
-    • <b>Target:</b> <code>[Price]</code> | <b>Invalidation:</b> <code>[Price]</code>
-    • <b>Game Plan:</b> <i>1 sentence explaining why this trade aligns with current macro differentials.</i>
+• <b>Institutional Flows & News (Comp 5 & 7):</b> <i>2 simple sentences summarizing the upcoming timed session events and big money bias.</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>2. 📅 SCHEDULED SESSION NEWS & VOLATILITY MAP</b>
+{calendar_data}
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>3. 🥇 MAJOR FOREX PAIRS & DXY</b>
+(Evaluate: DXY, EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF)
+
+Format each asset with space:
+
+<b>EURUSD</b> 🟢 BULLISH | Price: <code>1.0850</code>
+↳ <b>Macro Drivers:</b> <i>[Reference Comp 1 & 2 relative score]. 1-2 plain English sentences explaining drivers.</i>
+
+<b>GBPUSD</b> 🔴 BEARISH | Price: <code>1.2620</code>
+↳ <b>Macro Drivers:</b> <i>[Reference Comp 1 & 3 policy divergence]. 1-2 plain English sentences explaining drivers.</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>4. 📈 INDICES & COMMODITIES</b>
+(Evaluate: GOLD, SILVER, SP500, NAS100, GER40)
+
+Format each asset with space:
+
+<b>GOLD</b> 🟢 BULLISH | Price: <code>2400.50</code>
+↳ <b>Macro Drivers:</b> <i>[Reference Comp 4 & 6 safe-haven score]. 1-2 plain English sentences explaining drivers.</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>5. 🪙 CRYPTO ASSETS</b>
+(Evaluate: BTCUSDT, ETHUSDT)
+
+Format each asset with space:
+
+<b>BTCUSDT</b> ⚪ NEUTRAL | Price: <code>64200.00</code>
+↳ <b>Macro Drivers:</b> <i>[Reference Comp 5 & 8 liquidity flows]. 1-2 plain English sentences explaining drivers.</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>6. 🎯 APEX HIGH CONVICTION SETUPS (Comp 9 & 10)</b>
+(Pick the 2-3 best setups where Rates, Risk, and Flows all agree)
+
+• <b>[ASSET TICKER] — [BUY / SELL]</b>
+  - <b>Trigger Zone:</b> <code>[Price]</code>
+  - <b>Target Price:</b> <code>[Price]</code> | <b>Stop Loss:</b> <code>[Price]</code>
+  - <b>Simple Game Plan:</b> <i>1 plain English sentence explaining why all 10 components align.</i>
 """
 
     model_candidates = [
@@ -224,7 +313,7 @@ Format as:
     raise last_exception
 
 # ==========================================
-# 4. BANNER IMAGE GENERATOR
+# 5. BANNER IMAGE GENERATOR
 # ==========================================
 def generate_banner(mode: str, regime: str) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(8, 2.5), facecolor='#0D1117')
@@ -248,25 +337,23 @@ def generate_banner(mode: str, regime: str) -> io.BytesIO:
     return buf
 
 # ==========================================
-# 5. ROBUST TELEGRAM DISPATCH
+# 6. TELEGRAM DISPATCH WITH CHUNKING
 # ==========================================
 def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.BytesIO):
     photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
     msg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    
-    # 1. Send banner photo
+
     files = {'photo': ('banner.png', image_buf, 'image/png')}
     try:
         photo_res = requests.post(photo_url, data={'chat_id': chat_id}, files=files, timeout=15)
         if photo_res.status_code != 200:
-            print(f"⚠️ Banner upload warning ({photo_res.status_code}): {photo_res.text}")
+            print(f"⚠️ Banner upload alert ({photo_res.status_code}): {photo_res.text}")
     except Exception as e:
         print(f"⚠️ Photo dispatch exception: {e}")
 
-    # 2. Chunk message to prevent exceeding Telegram's 4,096 char limit
-    MAX_LEN = 4000
+    MAX_LEN = 3800
     chunks = [message[i:i+MAX_LEN] for i in range(0, len(message), MAX_LEN)]
-    
+
     overall_success = True
     for idx, chunk in enumerate(chunks):
         payload = {
@@ -276,10 +363,9 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
             'disable_web_page_preview': True
         }
         res = requests.post(msg_url, json=payload, timeout=15)
-        
-        # Fallback to plain text if Telegram rejects broken HTML syntax
+
         if res.status_code != 200:
-            print(f"⚠️ HTML parsing failed ({res.status_code}): {res.text}. Retrying with plain text fallback...")
+            print(f"⚠️ HTML formatting issue ({res.status_code}). Retrying chunk with plain text...")
             plain_chunk = re.sub(r'<[^>]*>', '', chunk)
             payload_plain = {
                 'chat_id': chat_id,
@@ -287,9 +373,9 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
                 'disable_web_page_preview': True
             }
             res = requests.post(msg_url, json=payload_plain, timeout=15)
-            
+
         if res.status_code == 200:
-            print(f"   ↳ Sent message chunk {idx + 1}/{len(chunks)}")
+            print(f"   ↳ Successfully sent report part {idx + 1}/{len(chunks)}")
         else:
             print(f"❌ Telegram API Error ({res.status_code}): {res.text}")
             overall_success = False
@@ -297,7 +383,7 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
     return overall_success
 
 # ==========================================
-# 6. CLI EXECUTION ENTRY POINT
+# 7. CLI EXECUTION ENTRY POINT
 # ==========================================
 def main():
     parser = argparse.ArgumentParser(description="Apex Macro Desk 10-Component Decision System")
@@ -322,18 +408,18 @@ def main():
     print("🧠 Running Regime Classifier (Component 8)...")
     regime, regime_desc, vix_val, yield_val = classify_market_regime()
     print(f"   ↳ Active Regime: {regime} | VIX: {vix_val:.2f} | US10Y: {yield_val:.2f}%")
-    
-    print("📊 Ingesting Market Prices (18 Assets)...")
+
+    print("📊 Ingesting Market Prices (14 Target Assets)...")
     ohlc_prices = fetch_market_data()
-    
+
     print("🌐 Ingesting Intermarket Data & Yields...")
     intermarket_data = fetch_intermarket_data()
-    
-    print("📅 Fetching Economic Calendar & Evaluating Event Risk Hierarchy...")
-    calendar_data, has_tier1 = fetch_economic_calendar(fmp_key)
 
     for current_mode in modes_to_run:
         print(f"\n🚀 Processing [{current_mode.upper()} SESSION]...")
+        print("📅 Fetching & Sorting Session News Events by Volatility...")
+        calendar_data, has_tier1 = fetch_economic_calendar(fmp_key, current_mode)
+
         print("🤖 Synthesizing Institutional Macro Report with Gemini...")
         report_text = generate_report(current_mode, calendar_data, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
 
@@ -342,7 +428,7 @@ def main():
 
         print("📡 Broadcasting Session Intelligence directly to Telegram...")
         success = send_telegram(bot_token, chat_id, report_text, banner_buf)
-        
+
         if success:
             print(f"✅ [{current_mode.upper()}] Report broadcasted successfully to Telegram!")
         else:
