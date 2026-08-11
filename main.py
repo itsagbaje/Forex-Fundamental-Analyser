@@ -45,11 +45,6 @@ INTERMARKET_TICKERS = {
 # 2. DECISION ENGINE & REGIME CLASSIFIER
 # ==========================================
 def classify_market_regime():
-    """
-    [Component 8: Regime Classifier]
-    Determines whether the market is currently RISK_DRIVEN, RATE_DRIVEN, or GROWTH_DIVERGENCE
-    using VIX level/slope and US 10-Year yield volatility.
-    """
     try:
         vix_data = yf.Ticker("^VIX").history(period="5d")['Close']
         us10y_data = yf.Ticker("^TNX").history(period="5d")['Close']
@@ -65,7 +60,7 @@ def classify_market_regime():
         if cur_vix > 22.0 or vix_5d_pct > 15.0:
             regime = "RISK_DRIVEN"
             desc = f"High Volatility Environment (VIX: {cur_vix:.2f}, 5d Slope: {vix_5d_pct:+.1f}%). Safe-haven flows and sentiment override fundamentals."
-        elif us10y_daily_move > 0.05: # >5 bps move on 10Y yields
+        elif us10y_daily_move > 0.05:
             regime = "RATE_DRIVEN"
             desc = f"Active Yield Movements (US10Y at {cur_10y:.2f}%). Real interest rate differentials drive capital flows."
         else:
@@ -77,10 +72,8 @@ def classify_market_regime():
         return "RATE_DRIVEN", f"Default fallback regime (Data error: {str(e)})", 18.0, 4.25
 
 def fetch_market_data():
-    """Fetches real-time price data for all 18 watchlist assets."""
     price_lines = []
     all_tickers = list(WATCHLIST_TICKERS.values())
-    
     try:
         data = yf.download(tickers=all_tickers, period="5d", interval="1d", progress=False)['Close']
         for name, ticker in WATCHLIST_TICKERS.items():
@@ -93,11 +86,9 @@ def fetch_market_data():
                 price_lines.append(f"• {name}: Live Price unavailable")
     except Exception as e:
         price_lines.append(f"Error fetching prices: {str(e)}")
-        
     return "\n".join(price_lines)
 
 def fetch_intermarket_data():
-    """[Component 1 & 4] Fetches DXY, Yields, and VIX metrics."""
     lines = []
     try:
         data = yf.download(tickers=list(INTERMARKET_TICKERS.values()), period="5d", interval="1d", progress=False)['Close']
@@ -110,16 +101,11 @@ def fetch_intermarket_data():
     return " | ".join(lines) if lines else "DXY & Yields temporarily unavailable"
 
 def fetch_economic_calendar(api_key):
-    """
-    [Component 7: Event Risk Hierarchy]
-    Filters economic events and categorizes them by Tier 1 (Central Bank/CPI/NFP) vs Tier 2.
-    """
     if not api_key:
         return "Economic calendar API key missing. Operating on intermarket yields.", False
     
     today = datetime.date.today().strftime("%Y-%m-%d")
     url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today}&to={today}&apikey={api_key}"
-    
     tier1_keywords = ["Interest Rate", "Fed", "ECB", "BOE", "BOJ", "CPI", "Inflation", "Non Farm", "NFP", "GDP"]
     has_tier1_today = False
     
@@ -136,7 +122,6 @@ def fetch_economic_calendar(api_key):
                 ev_name = ev.get('event', '')
                 is_t1 = any(kw.lower() in ev_name.lower() for kw in tier1_keywords) or ev.get('impact') == 'High'
                 line = f"• [{ev.get('currency')}] {ev_name} (Est: {ev.get('estimate', 'N/A')}, Prev: {ev.get('previous', 'N/A')})"
-                
                 if is_t1:
                     tier1_lines.append(line)
                     has_tier1_today = True
@@ -154,7 +139,6 @@ def fetch_economic_calendar(api_key):
 # 3. AI MACRO ENGINE & PROMPT SYNTHESIS
 # ==========================================
 def generate_report(mode: str, calendar_data: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str) -> str:
-    """Generates the structured session report applying the 10-Component Macro Decision Framework."""
     client = genai.Client(api_key=api_key)
     
     prompt = f"""
@@ -226,7 +210,6 @@ Format as:
 # 4. BANNER IMAGE GENERATOR
 # ==========================================
 def generate_banner(mode: str, regime: str) -> io.BytesIO:
-    """Generates a dark-mode banner graphic featuring the active regime badge."""
     fig, ax = plt.subplots(figsize=(8, 2.5), facecolor='#0D1117')
     ax.set_facecolor('#0D1117')
     ax.axis('off')
@@ -251,14 +234,11 @@ def generate_banner(mode: str, regime: str) -> io.BytesIO:
 # 5. DISPATCH TO TELEGRAM
 # ==========================================
 def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.BytesIO):
-    """Posts image banner and HTML report directly to Telegram channel."""
     photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
     files = {'photo': ('banner.png', image_buf, 'image/png')}
     
     if len(message) > 1000:
-        # Send Photo first
         requests.post(photo_url, data={'chat_id': chat_id}, files=files, timeout=15)
-        # Send Message text as separate message
         msg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         payload = {
             'chat_id': chat_id,
@@ -282,7 +262,7 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
 # ==========================================
 def main():
     parser = argparse.ArgumentParser(description="Apex Macro Desk 10-Component Decision System")
-    parser.add_argument("--mode", type=str, default="london", choices=["london", "ny", "eod", "update"], help="Session mode")
+    parser.add_argument("--mode", type=str, default="all", choices=["all", "london", "ny", "eod", "update"], help="Session mode")
     args = parser.parse_args()
 
     gemini_key = os.getenv("GEMINI_API_KEY")
@@ -298,8 +278,8 @@ def main():
         print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables must be set.")
         sys.exit(1)
 
-    print(f"🚀 Launching Apex Macro Desk Pipeline [{args.mode.upper()} SESSION]...")
-    
+    modes_to_run = ["london", "ny", "eod", "update"] if args.mode == "all" else [args.mode]
+
     print("🧠 Running Regime Classifier (Component 8)...")
     regime, regime_desc, vix_val, yield_val = classify_market_regime()
     print(f"   ↳ Active Regime: {regime} | VIX: {vix_val:.2f} | US10Y: {yield_val:.2f}%")
@@ -313,20 +293,22 @@ def main():
     print("📅 Fetching Economic Calendar & Evaluating Event Risk Hierarchy...")
     calendar_data, has_tier1 = fetch_economic_calendar(fmp_key)
 
-    print("🤖 Synthesizing Institutional Macro Report with Gemini...")
-    report_text = generate_report(args.mode, calendar_data, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
+    for current_mode in modes_to_run:
+        print(f"\n🚀 Processing [{current_mode.upper()} SESSION]...")
+        print("🤖 Synthesizing Institutional Macro Report with Gemini...")
+        report_text = generate_report(current_mode, calendar_data, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
 
-    print("🖼️ Generating Session Banner Graphic...")
-    banner_buf = generate_banner(args.mode, regime)
+        print("🖼️ Generating Session Banner Graphic...")
+        banner_buf = generate_banner(current_mode, regime)
 
-    print("📡 Broadcasting Session Intelligence directly to Telegram...")
-    success = send_telegram(bot_token, chat_id, report_text, banner_buf)
-    
-    if success:
-        print("✅ Report broadcasted successfully to Telegram!")
-    else:
-        print("❌ Broadcast failed. Check Telegram credentials or API payload limits.")
-        sys.exit(1)
+        print("📡 Broadcasting Session Intelligence directly to Telegram...")
+        success = send_telegram(bot_token, chat_id, report_text, banner_buf)
+        
+        if success:
+            print(f"✅ [{current_mode.upper()}] Report broadcasted successfully to Telegram!")
+        else:
+            print(f"❌ [{current_mode.upper()}] Broadcast failed.")
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()
