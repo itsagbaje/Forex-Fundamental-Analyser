@@ -91,7 +91,10 @@ LIVE ECONOMIC CALENDAR DATA FOR TODAY:
 1. <b>🏛️ {session_name.upper()} SESSION MACRO & LIVE CALENDAR</b>
 2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b> (Include all 18 watchlist assets)
 3. <b>🎯 TOP CONFLUENCE SETUPS</b>
-4. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
+4. <b>🔥 TOP 5 TO 7 FOCUS ASSETS (FUNDAMENTAL CONFLUENCE)</b>
+   - Identify specifically 5 to 7 high-conviction assets from the watchlist to concentrate on for this session based purely on macroeconomic drivers, central bank divergence, and today's economic calendar.
+   - For each asset, state the bias (Bullish/Bearish) and a concise fundamental justification.
+5. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
 """
 
     response = gemini_client.models.generate_content(
