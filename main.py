@@ -146,13 +146,10 @@ def fetch_economic_calendar(api_key, active_mode="all"):
 
             if 0 <= hour < 7:
                 session_name = "🌏 ASIAN SESSION (00:00 - 07:00 UTC)"
-                session_code = "asia"
             elif 7 <= hour < 13:
                 session_name = "🇬🇧 LONDON SESSION (07:00 - 13:00 UTC)"
-                session_code = "london"
             else:
                 session_name = "🇺🇸 NEW YORK SESSION (13:00 - 21:00 UTC)"
-                session_code = "ny"
 
             parsed_events.append({
                 "currency": ev.get("currency"),
@@ -163,8 +160,7 @@ def fetch_economic_calendar(api_key, active_mode="all"):
                 "hour": hour,
                 "estimate": ev.get("estimate", "N/A"),
                 "previous": ev.get("previous", "N/A"),
-                "session_name": session_name,
-                "session_code": session_code
+                "session_name": session_name
             })
 
         parsed_events.sort(key=lambda x: (x["hour"], x["impact_score"]))
@@ -202,28 +198,18 @@ def generate_report(mode: str, calendar_data: str, intermarket_data: str, ohlc_p
 You are the Chief Market Analyst at Apex Macro Desk. Create an easy-to-read, beginner-friendly **{mode.upper()} SESSION MARKET REPORT**.
 
 WRITING & FORMATTING RULES:
-1. **SIMPLE LANGUAGE:** Explain concepts in plain, clear everyday English. Avoid Wall Street jargon.
-2. **VISUAL SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections, paragraphs, and individual asset breakdowns for mobile screen readability.
-3. **HTML STYLING:** Use <b>BOLD</b> for titles and tickers, <i>italics</i> for explanations, and <code>code tags</code> for prices/times. Do NOT use markdown asterisks (`*`) or unescaped `<` or `>` symbols.
-4. **EXPLICIT 10-COMPONENT INTEGRATION:**
-   - Component 1: Rate Differentials
-   - Component 2: Growth Differentials
-   - Component 3: Central Bank Stance
-   - Component 4: Active Risk Regime
-   - Component 5: Institutional Order Flow
-   - Component 6: Market Sentiment / VIX
-   - Component 7: Scheduled News Risks
-   - Component 8: Volatility Regime
-   - Component 9: Relative Divergence Score
-   - Component 10: High Conviction Alignment Rule
+1. **NO SHORTCODES:** Do NOT use abbreviations like "Comp 1", "Comp 8", or "Comp 1 & 3". Always write out the FULL, complete component names in plain, professional English.
+2. **SIMPLE LANGUAGE:** Explain concepts in clear everyday English. Avoid dense Wall Street jargon.
+3. **VISUAL SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections, paragraphs, and individual asset breakdowns so the text is spacious and readable on phone screens.
+4. **HTML STYLING:** Use <b>BOLD</b> for titles and tickers, <i>italics</i> for explanations, and <code>code tags</code> for prices/times. Do NOT use markdown asterisks (`*`) or unescaped `<` or `>` symbols.
 
 SYSTEM INPUT DATA:
-- **ACTIVE REGIME (Comp 8):** {regime} ({regime_desc})
+- **ACTIVE REGIME:** {regime} ({regime_desc})
 - **LIVE PRICES (14 TARGET ASSETS):**
 {ohlc_prices}
 - **INTERMARKET INDICATORS:**
 {intermarket_data}
-- **TIMED & SESSION-GROUPED EVENT RISK (Comp 7):**
+- **TIMED SESSION NEWS DATA:**
 {calendar_data}
 
 REQUIRED TELEGRAM OUTPUT STRUCTURE:
@@ -231,15 +217,19 @@ REQUIRED TELEGRAM OUTPUT STRUCTURE:
 🏛️ <b>APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>1. 🌐 DECISION ENGINE & 10-COMPONENT SNAPSHOT</b>
+<b>1. 🌐 DECISION ENGINE & MACRO FRAMEWORK OVERVIEW</b>
 
-• <b>Active Market Regime (Comp 8):</b> <i>{regime} — {regime_desc}</i>
+• <b>Active Market Regime:</b> <i>{regime} — {regime_desc}</i>
 
-• <b>Dollar & Interest Rates (Comp 1 & 3):</b> <i>2 simple sentences explaining USD strength/weakness and bond yield direction.</i>
+• <b>Interest Rate & Bond Yield Differentials:</b> <i>2 plain English sentences explaining how bond yield movements and real interest rate gaps are driving capital flows.</i>
 
-• <b>Market Sentiment & Fear (Comp 4 & 6):</b> <i>2 simple sentences explaining market risk appetite.</i>
+• <b>Central Bank Policy Stance:</b> <i>2 plain English sentences explaining expectations for the Fed, ECB, and BOE.</i>
 
-• <b>Institutional Flows & News (Comp 5 & 7):</b> <i>2 simple sentences summarizing the upcoming timed session events and big money bias.</i>
+• <b>Growth & Macro Divergence:</b> <i>2 plain English sentences comparing economic performance across key regions.</i>
+
+• <b>Market Sentiment & Volatility Dynamics:</b> <i>2 plain English sentences assessing fear levels, risk-on/risk-off sentiment, and VIX status.</i>
+
+• <b>Institutional Order Flow & Positioning:</b> <i>2 plain English sentences on big money movements and scheduled news event risks for today.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -249,45 +239,45 @@ REQUIRED TELEGRAM OUTPUT STRUCTURE:
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>3. 🥇 MAJOR FOREX PAIRS & DXY</b>
-(Evaluate: DXY, EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF)
+(Evaluate ONLY these 7 assets: DXY, EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF)
 
-Format each asset with space:
+Format every single asset with double line spacing like this:
 
 <b>EURUSD</b> 🟢 BULLISH | Price: <code>1.0850</code>
-↳ <b>Macro Drivers:</b> <i>[Reference Comp 1 & 2 relative score]. 1-2 plain English sentences explaining drivers.</i>
+↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining drivers based on interest rates and central bank stance.</i>
 
 <b>GBPUSD</b> 🔴 BEARISH | Price: <code>1.2620</code>
-↳ <b>Macro Drivers:</b> <i>[Reference Comp 1 & 3 policy divergence]. 1-2 plain English sentences explaining drivers.</i>
+↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining drivers.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>4. 📈 INDICES & COMMODITIES</b>
-(Evaluate: GOLD, SILVER, SP500, NAS100, GER40)
+(Evaluate ONLY these 5 assets: GOLD, SILVER, SP500, NAS100, GER40)
 
 Format each asset with space:
 
 <b>GOLD</b> 🟢 BULLISH | Price: <code>2400.50</code>
-↳ <b>Macro Drivers:</b> <i>[Reference Comp 4 & 6 safe-haven score]. 1-2 plain English sentences explaining drivers.</i>
+↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining market drivers.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>5. 🪙 CRYPTO ASSETS</b>
-(Evaluate: BTCUSDT, ETHUSDT)
+(Evaluate ONLY these 2 assets: BTCUSDT, ETHUSDT)
 
 Format each asset with space:
 
 <b>BTCUSDT</b> ⚪ NEUTRAL | Price: <code>64200.00</code>
-↳ <b>Macro Drivers:</b> <i>[Reference Comp 5 & 8 liquidity flows]. 1-2 plain English sentences explaining drivers.</i>
+↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining market drivers.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>6. 🎯 APEX HIGH CONVICTION SETUPS (Comp 9 & 10)</b>
-(Pick the 2-3 best setups where Rates, Risk, and Flows all agree)
+<b>6. 🎯 HIGH CONVICTION SETUPS</b>
+(Pick the 2-3 best trade setups where interest rates, risk sentiment, and institutional flows all point in the same direction)
 
 • <b>[ASSET TICKER] — [BUY / SELL]</b>
   - <b>Trigger Zone:</b> <code>[Price]</code>
   - <b>Target Price:</b> <code>[Price]</code> | <b>Stop Loss:</b> <code>[Price]</code>
-  - <b>Simple Game Plan:</b> <i>1 plain English sentence explaining why all 10 components align.</i>
+  - <b>Trade Game Plan:</b> <i>1 plain English sentence explaining why interest rates, risk sentiment, and market flows align for this setup.</i>
 """
 
     model_candidates = [
@@ -386,7 +376,7 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
 # 7. CLI EXECUTION ENTRY POINT
 # ==========================================
 def main():
-    parser = argparse.ArgumentParser(description="Apex Macro Desk 10-Component Decision System")
+    parser = argparse.ArgumentParser(description="Apex Macro Desk Decision System")
     parser.add_argument("--mode", type=str, default="all", choices=["all", "london", "ny", "eod", "update"], help="Session mode")
     args = parser.parse_args()
 
@@ -405,7 +395,7 @@ def main():
 
     modes_to_run = ["london", "ny", "eod", "update"] if args.mode == "all" else [args.mode]
 
-    print("🧠 Running Regime Classifier (Component 8)...")
+    print("🧠 Running Regime Classifier...")
     regime, regime_desc, vix_val, yield_val = classify_market_regime()
     print(f"   ↳ Active Regime: {regime} | VIX: {vix_val:.2f} | US10Y: {yield_val:.2f}%")
 
