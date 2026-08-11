@@ -21,7 +21,6 @@ if not GEMINI_API_KEY:
     print("[X] Critical Error: GEMINI_API_KEY missing.")
     sys.exit(1)
 
-# Exact ticker mappings for all 18 watchlist assets
 WATCHLIST_TICKERS = {
     "EURUSD": "EURUSD=X",
     "GBPUSD": "GBPUSD=X",
@@ -44,17 +43,14 @@ WATCHLIST_TICKERS = {
 }
 
 TARGET_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF"}
-
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==========================================
 # 2. DATA FETCHING MODULES
 # ==========================================
 def fetch_intermarket_data() -> str:
-    """Fetches real-time DXY and US10Y Yields via yfinance."""
     symbols = {"US Dollar Index (DXY)": "DX=F", "US 10Y Yield": "^TNX"}
     summary = []
-    
     for name, sym in symbols.items():
         try:
             ticker = yf.Ticker(sym)
@@ -66,39 +62,37 @@ def fetch_intermarket_data() -> str:
                 summary.append(f"• {name}: {curr:.2f} ({pct:+.2f}% today)")
         except Exception:
             continue
-            
-    return "\n".join(summary) if summary else "Intermarket yield data currently unavailable."
+    return "\n".join(summary) if summary else "Intermarket yield data unavailable."
 
-def fetch_watchlist_prices() -> str:
-    """Fetches real-time prices and 24h momentum for all 18 watchlist assets."""
+def fetch_watchlist_prices_and_ranges() -> str:
+    """Fetches Open, High, Low, Close (OHLC) for EOD audit and intraday tracking."""
     summary = []
-    print("[*] Fetching live quotes for all 18 watchlist assets...")
+    print("[*] Fetching OHLC price ranges for watchlist assets...")
     
     for name, sym in WATCHLIST_TICKERS.items():
         try:
             ticker = yf.Ticker(sym)
-            hist = ticker.history(period="2d")
-            if len(hist) >= 1:
-                curr = hist['Close'].iloc[-1]
-                if len(hist) >= 2:
-                    prev = hist['Close'].iloc[-2]
-                    pct = ((curr - prev) / prev) * 100
-                    fmt_price = f"{curr:.2f}" if curr > 10 else f"{curr:.5f}"
-                    summary.append(f"• {name}: {fmt_price} ({pct:+.2f}%)")
-                else:
-                    fmt_price = f"{curr:.2f}" if curr > 10 else f"{curr:.5f}"
-                    summary.append(f"• {name}: {fmt_price}")
+            hist = ticker.history(period="1d")
+            if not hist.empty:
+                open_p = hist['Open'].iloc[-1]
+                high_p = hist['High'].iloc[-1]
+                low_p = hist['Low'].iloc[-1]
+                close_p = hist['Close'].iloc[-1]
+                pct = ((close_p - open_p) / open_p) * 100
+                
+                fmt = ".2f" if close_p > 10 else ".5f"
+                summary.append(
+                    f"• {name}: Open {open_p:{fmt}} | High {high_p:{fmt}} | Low {low_p:{fmt}} | Close {close_p:{fmt}} ({pct:+.2f}%)"
+                )
         except Exception as e:
             print(f"[!] Warning: Could not fetch price for {name}: {e}")
             continue
             
-    return "\n".join(summary) if summary else "Watchlist live price data unavailable."
+    return "\n".join(summary) if summary else "Price data unavailable."
 
 def fetch_today_economic_events() -> str:
-    """Fetches economic calendar from FMP API."""
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
     url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today_str}&to={today_str}&apikey={FMP_API_KEY}"
-    
     try:
         response = requests.get(url, timeout=10)
         if response.status_code != 200 or not isinstance(response.json(), list):
@@ -110,62 +104,25 @@ def fetch_today_economic_events() -> str:
             imp = str(ev.get("impact", "")).capitalize()
             if curr in TARGET_CURRENCIES and imp in ["High", "Medium"]:
                 filtered.append(
-                    f"• [{curr} | {imp}] {ev.get('event')} @ {ev.get('date')} UTC "
-                    f"(Actual: {ev.get('actual', 'Pending')} | Est: {ev.get('estimate', 'N/A')})"
+                    f"• [{curr} | {imp}] {ev.get('event')} (Actual: {ev.get('actual', 'Pending')} | Est: {ev.get('estimate', 'N/A')})"
                 )
         return "\n".join(filtered[:15]) if filtered else "No major events scheduled."
     except Exception as err:
         return f"Calendar fetch error: {err}"
 
-def fetch_cot_positioning() -> str:
-    """Fetches current year's CFTC Traders in Financial Futures (TFF) positioning."""
-    try:
-        current_year = datetime.utcnow().year
-        df = cot.cot_year(year=current_year, cot_report_type='traders_in_financial_futures_fut')
-        
-        if df.empty:
-            return "CFTC positioning data currently unavailable."
-
-        latest_date = df['As_of_Date_In_Form_YYMMDD'].iloc[-1]
-        latest_df = df[df['As_of_Date_In_Form_YYMMDD'] == latest_date]
-
-        contracts = {
-            "USD (DXY)": "CHICAGO MERCANTILE EXCHANGE",
-            "EUR": "EURO FX",
-            "GBP": "BRITISH POUND",
-            "JPY": "JAPANESE YEN",
-            "GOLD": "GOLD"
-        }
-
-        summary = [f"[CFTC Institutional Positioning - Week of {latest_date}]"]
-        for label, match in contracts.items():
-            row = latest_df[latest_df['Market_and_Exchange_Names'].str.contains(match, case=False, na=False)]
-            if not row.empty:
-                longs = row['Lev_Money_Positions_Long_All'].values[0]
-                shorts = row['Lev_Money_Positions_Short_All'].values[0]
-                net = longs - shorts
-                sentiment = "Net Long 🟢" if net > 0 else "Net Short 🔴"
-                summary.append(f"• {label}: {sentiment} ({net:+,d} contracts)")
-
-        return "\n".join(summary) if summary else "CFTC positioning data bypassed."
-    except Exception as err:
-        return f"CFTC COT data fetch bypassed: {err}"
-
 # ==========================================
-# 3. SCORECARD GRAPHIC GENERATOR
+# 3. GRAPHIC GENERATOR
 # ==========================================
-def generate_and_send_scorecard_image():
-    """Generates a professional dark-mode graphic banner for the desk."""
+def generate_and_send_scorecard_image(title_suffix: str):
     fig, ax = plt.subplots(figsize=(8, 2), dpi=200)
     fig.patch.set_facecolor('#0B132B')
     ax.set_facecolor('#0B132B')
     
     ax.text(0.5, 0.65, "APEX MACRO DESK", color='#D4AF37', fontsize=18, fontweight='bold', ha='center')
-    ax.text(0.5, 0.35, "INSTITUTIONAL CROSS-ASSET INTELLIGENCE", color='#00F0FF', fontsize=9, fontweight='bold', ha='center')
-    ax.text(0.5, 0.15, f"Session Briefing | {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", color='#FFFFFF', fontsize=7, ha='center')
+    ax.text(0.5, 0.35, title_suffix.upper(), color='#00F0FF', fontsize=9, fontweight='bold', ha='center')
+    ax.text(0.5, 0.15, f"Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", color='#FFFFFF', fontsize=7, ha='center')
     
     ax.axis('off')
-    
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
     buf.seek(0)
@@ -173,38 +130,59 @@ def generate_and_send_scorecard_image():
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     files = {'photo': ('scorecard.png', buf, 'image/png')}
-    data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': '🏛️ <b>APEX MACRO DESK — SESSION BRIEFING</b>', 'parse_mode': 'HTML'}
+    data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f'🏛️ <b>APEX MACRO DESK — {title_suffix.upper()}</b>', 'parse_mode': 'HTML'}
     requests.post(url, data=data, files=files, timeout=15)
 
 # ==========================================
-# 4. REPORT GENERATION VIA GEMINI
+# 4. REPORT GENERATION (SESSION vs EOD RECAP)
 # ==========================================
-def generate_report(session_name: str, calendar_data: str, intermarket_data: str, watchlist_prices: str, cot_data: str) -> str:
-    prompt = f"""
-You are an institutional macro strategist at Apex Macro Desk. Generate the **{session_name} Session Report**.
+def generate_report(mode: str, calendar_data: str, intermarket_data: str, ohlc_prices: str) -> str:
+    if mode == "EOD":
+        prompt = f"""
+You are the Lead Macro Risk Officer at Apex Macro Desk. Generate the **END OF DAY SETUP PERFORMANCE & MACRO RECAP**.
+
+TODAY'S ACTUAL INTRADAY PRICE RANGES (OHLC):
+{ohlc_prices}
+
+INTERMARKET & YIELD CLOSING SUMMARY:
+{intermarket_data}
+
+ECONOMIC CALENDAR OUTCOMES:
+{calendar_data}
+
+**STRICT FORMATTING RULES (TELEGRAM HTML):**
+1. Use ONLY valid HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
+2. Do NOT use markdown asterisks (*). EVERY <b> tag MUST have a corresponding </b> tag.
+3. Do NOT use raw '<' or '>' characters.
+
+**REQUIRED SECTIONS:**
+1. <b>🏛️ END OF DAY MACRO SUMMARY</b> (Brief overview of how economic events and yield movements drove risk sentiment today across London and NY)
+2. <b>🎯 TOP CONFLUENCE SETUPS AUDIT (LONDON & NY)</b> (Evaluate the top watchlist setups generated today. State: Pair | Session | Intended Bias | Actual Range Hit | Verdict: ✅ Played Out / ❌ Invalidated / ⏸️ Consolidated)
+3. <b>📊 DAY CLOSING SCORECARD REVIEW</b> (Brief summary of key gainers/losers relative to fundamental bias)
+4. <b>🔮 OVERNIGHT & ASIAN SESSION OUTLOOK</b>
+"""
+    else:
+        prompt = f"""
+You are an institutional macro strategist at Apex Macro Desk. Generate the **{mode} Session Report**.
 
 LIVE REAL-TIME WATCHLIST SPOT PRICES:
-{watchlist_prices}
+{ohlc_prices}
 
 REAL-TIME INTERMARKET YIELDS & DXY:
 {intermarket_data}
 
-WEEKLY INSTITUTIONAL COT POSITIONING:
-{cot_data}
-
 LIVE ECONOMIC CALENDAR:
 {calendar_data}
 
-**STRICT FORMATTING & ACCURACY RULES:**
-1. Use ONLY these valid HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
+**STRICT FORMATTING RULES (TELEGRAM HTML):**
+1. Use ONLY valid HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
 2. Do NOT use markdown asterisks (*). EVERY <b> tag MUST have a corresponding </b> tag.
-3. Do NOT use raw '<' or '>' characters anywhere in the text (e.g., write 'below -5' instead of '< -5').
-4. **SPOT PRICE ANCHORING:** You MUST anchor all key execution levels, support/resistance references, and price comments strictly around the provided **LIVE REAL-TIME WATCHLIST SPOT PRICES**. Do NOT invent or estimate prices outside these real-time numbers.
+3. Anchor execution zones strictly to the live prices provided.
 
 **REQUIRED SECTIONS:**
-1. <b>🏛️ {session_name.upper()} SESSION MACRO & YIELD DRIVERS</b>
-2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b> (List all 18 watchlist assets with signed scores and 1-word fundamental drivers)
-3. <b>🔥 TOP 5 TO 7 FOCUS ASSETS (FUNDAMENTAL CONFLUENCE)</b> (Identify specifically 5 to 7 high-conviction assets; state Pair, Bias, Fundamental Justification, Key Execution Zone anchored to live price)
+1. <b>🏛️ {mode.upper()} SESSION MACRO & YIELD DRIVERS</b>
+2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b>
+3. <b>🔥 TOP 5 TO 7 FOCUS ASSETS (FUNDAMENTAL CONFLUENCE)</b>
 4. <b>🎯 TOP CONFLUENCE SETUPS</b>
 5. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
 """
@@ -226,33 +204,41 @@ def send_telegram_text(html_content: str):
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML", "disable_web_page_preview": True}
         res = requests.post(url, json=payload, timeout=15)
         
-        # Failsafe fallback if Gemini produces malformed HTML
         if res.status_code == 400 and "can't parse entities" in res.text:
-            print("[!] Telegram HTML parse error detected. Falling back to plain text dispatch...")
+            print("[!] HTML parse error detected. Falling back to plain text...")
             plain_text = re.sub(r'<[^>]*>', '', chunk)
             payload_fallback = {"chat_id": TELEGRAM_CHAT_ID, "text": plain_text, "disable_web_page_preview": True}
-            res_fb = requests.post(url, json=payload_fallback, timeout=15)
-            if res_fb.status_code != 200:
-                raise RuntimeError(f"Telegram Fallback Error: {res_fb.text}")
+            requests.post(url, json=payload_fallback, timeout=15)
         elif res.status_code != 200:
             raise RuntimeError(f"Telegram Error: {res.text}")
 
 if __name__ == "__main__":
-    session = "London" if datetime.utcnow().hour < 12 else "New York"
-    print(f"[*] Executing Apex Macro Pipeline for {session} Session...")
+    current_hour = datetime.utcnow().hour
+    
+    # Determine mode based on UTC run time
+    if current_hour >= 20:
+        mode = "EOD"
+        banner_title = "End of Day Setup Performance Recap"
+    elif current_hour >= 12:
+        mode = "New York"
+        banner_title = "New York Session Intelligence"
+    else:
+        mode = "London"
+        banner_title = "London Session Intelligence"
+        
+    print(f"[*] Executing Apex Macro Pipeline for {mode} Mode...")
     
     try:
-        generate_and_send_scorecard_image()
+        generate_and_send_scorecard_image(banner_title)
         
         market_ctx = fetch_intermarket_data()
-        watchlist_ctx = fetch_watchlist_prices()
+        ohlc_ctx = fetch_watchlist_prices_and_ranges()
         cal_ctx = fetch_today_economic_events()
-        cot_ctx = fetch_cot_positioning()
         
-        report = generate_report(session, cal_ctx, market_ctx, watchlist_ctx, cot_ctx)
+        report = generate_report(mode, cal_ctx, market_ctx, ohlc_ctx)
         
         send_telegram_text(report)
-        print("[✓] Apex Macro Report delivered successfully.")
+        print(f"[✓] Apex Macro {mode} Report delivered successfully.")
     except Exception as e:
         print(f"[X] Pipeline execution failed: {e}")
         sys.exit(1)
