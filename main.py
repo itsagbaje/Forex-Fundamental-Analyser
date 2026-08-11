@@ -1,6 +1,7 @@
 import os
 import sys
 import io
+import re
 import requests
 from datetime import datetime
 import yfinance as yf
@@ -34,7 +35,7 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 # ==========================================
 def fetch_intermarket_data() -> str:
     """Fetches real-time DXY, US10Y Yields, and Gold momentum via yfinance."""
-    symbols = {"US Dollar Index (DXY)": "DX-Y.NY", "US 10Y Yield": "^TNX", "Gold Futures": "GC=F"}
+    symbols = {"US Dollar Index (DXY)": "DX=F", "US 10Y Yield": "^TNX", "Gold Futures": "GC=F"}
     summary = []
     
     for name, sym in symbols.items():
@@ -49,7 +50,7 @@ def fetch_intermarket_data() -> str:
         except Exception:
             continue
             
-    return "\n".join(summary) if summary else "Intermarket yield data unavailable."
+    return "\n".join(summary) if summary else "Intermarket yield data currently unavailable."
 
 def fetch_today_economic_events() -> str:
     """Fetches economic calendar from FMP API."""
@@ -94,7 +95,7 @@ def fetch_cot_positioning() -> str:
             "GOLD": "GOLD"
         }
 
-        summary = [f"<b>[CFTC Institutional Positioning - Week of {latest_date}]</b>"]
+        summary = [f"[CFTC Institutional Positioning - Week of {latest_date}]"]
         for label, match in contracts.items():
             row = latest_df[latest_df['Market_and_Exchange_Names'].str.contains(match, case=False, na=False)]
             if not row.empty:
@@ -151,8 +152,10 @@ WEEKLY INSTITUTIONAL COT POSITIONING:
 LIVE ECONOMIC CALENDAR:
 {calendar_data}
 
-**STRICT FORMATTING RULES:**
-1. Use ONLY valid Telegram HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>. Do NOT use markdown asterisks (*).
+**STRICT FORMATTING RULES (TELEGRAM HTML):**
+1. Use ONLY these valid HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
+2. Do NOT use markdown asterisks (*). EVERY <b> tag MUST have a corresponding </b> tag.
+3. Do NOT use raw '<' or '>' characters anywhere in the text (e.g., write 'below -5' instead of '< -5').
 
 **REQUIRED SECTIONS:**
 1. <b>🏛️ {session_name.upper()} SESSION MACRO & YIELD DRIVERS</b>
@@ -178,7 +181,16 @@ def send_telegram_text(html_content: str):
     for chunk in chunks:
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML", "disable_web_page_preview": True}
         res = requests.post(url, json=payload, timeout=15)
-        if res.status_code != 200:
+        
+        # Failsafe fallback if Gemini produces malformed HTML
+        if res.status_code == 400 and "can't parse entities" in res.text:
+            print("[!] Telegram HTML parse error detected. Falling back to plain text dispatch...")
+            plain_text = re.sub(r'<[^>]*>', '', chunk)
+            payload_fallback = {"chat_id": TELEGRAM_CHAT_ID, "text": plain_text, "disable_web_page_preview": True}
+            res_fb = requests.post(url, json=payload_fallback, timeout=15)
+            if res_fb.status_code != 200:
+                raise RuntimeError(f"Telegram Fallback Error: {res_fb.text}")
+        elif res.status_code != 200:
             raise RuntimeError(f"Telegram Error: {res.text}")
 
 if __name__ == "__main__":
