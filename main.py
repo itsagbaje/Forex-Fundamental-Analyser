@@ -94,10 +94,9 @@ LIVE ECONOMIC CALENDAR DATA FOR TODAY:
 4. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
 """
 
-    response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
+    response = client.models.generate_content(
+    model="gemini-1.5-flash", contents=prompt
+)
     return response.text
 
 # ==========================================
