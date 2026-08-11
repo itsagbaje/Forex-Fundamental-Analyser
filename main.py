@@ -200,11 +200,27 @@ Format as:
     • <b>Game Plan:</b> <i>1 sentence explaining why this trade aligns with current macro differentials.</i>
 """
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
-    return response.text
+    model_candidates = [
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash"
+    ]
+    last_exception = None
+
+    for model_name in model_candidates:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            if response and response.text:
+                return response.text
+        except Exception as e:
+            last_exception = e
+            continue
+
+    raise last_exception
 
 # ==========================================
 # 4. BANNER IMAGE GENERATOR
