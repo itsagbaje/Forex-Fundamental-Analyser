@@ -99,46 +99,56 @@ def fetch_intermarket_data():
     return " | ".join(lines) if lines else "Key indicators updating..."
 
 # ==========================================
-# 3. SESSION-ALIGNED & VOLATILITY-SORTED NEWS
+# 3. FINNHUB ECONOMIC CALENDAR INTEGRATION
 # ==========================================
 def fetch_economic_calendar(api_key, active_mode="all"):
     if not api_key:
-        return "Economic calendar API key missing. Relying on yield trends.", False
+        return "ℹ️ <i>Finnhub API key missing. Relying on yield trends.</i>", False
 
     today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-    url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today}&to={today}&apikey={api_key}"
-    relevant_currencies = {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD"}
+    url = f"https://finnhub.io/api/v1/economic-calendar?from={today}&to={today}&token={api_key}"
+
+    country_to_currency = {
+        "US": "USD", "EU": "EUR", "DE": "EUR", "FR": "EUR", "IT": "EUR", "ES": "EUR",
+        "GB": "GBP", "UK": "GBP", "JP": "JPY", "CA": "CAD", 
+        "AU": "AUD", "CH": "CHF", "NZ": "NZD"
+    }
 
     try:
         res = requests.get(url, timeout=10)
         if res.status_code != 200:
-            return f"Calendar fetch failed (Status {res.status_code})", False
+            return f"ℹ️ <i>Calendar fetch unavailable (Status {res.status_code}).</i>", False
 
-        events = res.json()
-        filtered_events = [
-            e for e in events
-            if e.get("impact") in ["High", "Medium"] and e.get("currency") in relevant_currencies
-        ]
+        data = res.json()
+        events = data.get("economicCalendar", [])
 
-        if not filtered_events:
+        if not events:
             return "No high or medium impact economic releases scheduled for today.", False
 
         parsed_events = []
         has_tier1 = False
 
-        for ev in filtered_events:
-            impact_raw = ev.get("impact", "Medium")
+        for ev in events:
+            impact_raw = str(ev.get("impact", "")).capitalize()
+            if impact_raw not in ["High", "Medium"]:
+                continue
+
+            country = str(ev.get("country", "")).upper()
+            currency = country_to_currency.get(country, country)
+            if currency not in {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD"}:
+                continue
+
             impact_score = 1 if impact_raw == "High" else 2
             if impact_raw == "High":
                 has_tier1 = True
 
-            date_str = ev.get("date", "")
+            time_raw = str(ev.get("time", ""))
             time_str = "TBD"
             hour = 12
 
-            if date_str:
+            if time_raw:
                 try:
-                    dt = datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                    dt = datetime.datetime.strptime(time_raw[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
                     time_str = dt.strftime("%H:%M UTC")
                     hour = dt.hour
                 except ValueError:
@@ -152,16 +162,19 @@ def fetch_economic_calendar(api_key, active_mode="all"):
                 session_name = "🇺🇸 NEW YORK SESSION (13:00 - 21:00 UTC)"
 
             parsed_events.append({
-                "currency": ev.get("currency"),
-                "event": ev.get("event"),
+                "currency": currency,
+                "event": ev.get("event", "Economic Event"),
                 "impact": impact_raw,
                 "impact_score": impact_score,
                 "time_str": time_str,
                 "hour": hour,
                 "estimate": ev.get("estimate", "N/A"),
-                "previous": ev.get("previous", "N/A"),
+                "previous": ev.get("prev", "N/A"),
                 "session_name": session_name
             })
+
+        if not parsed_events:
+            return "No high or medium impact economic releases scheduled for today.", False
 
         parsed_events.sort(key=lambda x: (x["hour"], x["impact_score"]))
 
@@ -186,7 +199,7 @@ def fetch_economic_calendar(api_key, active_mode="all"):
         return "\n".join(output_lines).strip(), has_tier1
 
     except Exception as e:
-        return f"Calendar processing issue: {str(e)}", False
+        return f"ℹ️ <i>Calendar processing bypassed ({str(e)}).</i>", False
 
 # ==========================================
 # 4. AI MACRO ENGINE & PROMPT SYNTHESIS
@@ -281,8 +294,6 @@ Format each asset with space:
 """
 
     model_candidates = [
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
         "gemini-2.5-flash",
         "gemini-2.0-flash"
     ]
@@ -383,7 +394,7 @@ def main():
     gemini_key = os.getenv("GEMINI_API_KEY")
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    fmp_key = os.getenv("FMP_API_KEY", "")
+    finnhub_key = os.getenv("FINNHUB_API_KEY", "")
 
     if not gemini_key:
         print("ERROR: GEMINI_API_KEY environment variable is not set.")
@@ -407,8 +418,8 @@ def main():
 
     for current_mode in modes_to_run:
         print(f"\n🚀 Processing [{current_mode.upper()} SESSION]...")
-        print("📅 Fetching & Sorting Session News Events by Volatility...")
-        calendar_data, has_tier1 = fetch_economic_calendar(fmp_key, current_mode)
+        print("📅 Fetching Finnhub Session News Events...")
+        calendar_data, has_tier1 = fetch_economic_calendar(finnhub_key, current_mode)
 
         print("🤖 Synthesizing Institutional Macro Report with Gemini...")
         report_text = generate_report(current_mode, calendar_data, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
