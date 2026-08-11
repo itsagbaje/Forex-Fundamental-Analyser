@@ -1,15 +1,16 @@
 import os
+import sys
 import requests
 from datetime import datetime
-from openai import OpenAI
+from google import genai
 
 # ==========================================
 # 1. CONFIGURATION & ENVIRONMENT VARIABLES
 # ==========================================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FMP_API_KEY = os.getenv("FMP_API_KEY")  # Financial Modeling Prep API Key
+FMP_API_KEY = os.getenv("FMP_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 WATCHLIST = [
     "EURUSD", "GBPUSD", "USDCHF", "USDCAD", "GBPJPY", "EURJPY",
@@ -19,16 +20,14 @@ WATCHLIST = [
 
 TARGET_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF"}
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Initialize Official Gemini Client
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 2. REAL-TIME ECONOMIC CALENDAR FETCHING
+# 2. ECONOMIC CALENDAR DATA FETCHING
 # ==========================================
 def fetch_today_economic_events() -> str:
-    """
-    Fetches real-time economic calendar releases from Financial Modeling Prep (FMP) API,
-    filtering for high and medium impact releases across watchlist currencies.
-    """
+    """Fetches real-time economic calendar from Financial Modeling Prep API."""
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
     url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today_str}&to={today_str}&apikey={FMP_API_KEY}"
     
@@ -47,7 +46,6 @@ def fetch_today_economic_events() -> str:
             impact = str(ev.get("impact", "")).capitalize()
             event_name = ev.get("event", "Economic Event")
             
-            # Filter for relevant macro currencies and high/medium impact events
             if currency in TARGET_CURRENCIES and impact in ["High", "Medium"]:
                 actual = ev.get("actual") if ev.get("actual") is not None else "Pending"
                 estimate = ev.get("estimate") if ev.get("estimate") is not None else "N/A"
@@ -62,18 +60,47 @@ def fetch_today_economic_events() -> str:
         if not filtered_events:
             return "No high/medium impact calendar events scheduled for target currencies today."
             
-        return "\n".join(filtered_events[:15])  # Cap context size
+        return "\n".join(filtered_events[:15])
         
     except Exception as err:
         return f"Economic calendar fetch error: {err}"
 
 # ==========================================
-# 3. TELEGRAM DELIVERY HELPER (HTML MODE)
+# 3. REPORT GENERATION VIA GEMINI
+# ==========================================
+def generate_report_with_calendar(session_name: str, raw_calendar_data: str) -> str:
+    prompt = f"""
+You are an institutional macro quantitative strategist. Generate a **{session_name} Session Fundamental Analysis Report**.
+
+Watchlist Assets: {", ".join(WATCHLIST)}
+
+LIVE ECONOMIC CALENDAR DATA FOR TODAY:
+{raw_calendar_data}
+
+**STRICT FORMATTING RULES:**
+1. Use ONLY valid Telegram HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
+2. Do NOT use markdown asterisks (*). Do NOT use raw < or > unless forming valid HTML tags.
+
+**REQUIRED REPORT SECTIONS:**
+1. <b>🏛️ {session_name.upper()} SESSION MACRO & LIVE CALENDAR</b>
+2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b> (Include all 18 watchlist assets)
+3. <b>🎯 TOP CONFLUENCE SETUPS</b>
+4. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
+"""
+
+    response = gemini_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+    return response.text
+
+# ==========================================
+# 4. TELEGRAM DISPATCH HELPER
 # ==========================================
 def send_telegram_report(html_content: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
-    # Chunk if report exceeds Telegram's 4096 character limit
+    # Chunk long reports to fit Telegram's limit
     chunks = [html_content[i:i+4000] for i in range(0, len(html_content), 4000)]
 
     for chunk in chunks:
@@ -87,50 +114,10 @@ def send_telegram_report(html_content: str):
         if res.status_code != 200:
             raise RuntimeError(f"Telegram Delivery Error ({res.status_code}): {res.text}")
             
-    print("[✓] Live report successfully published to Telegram.")
+    print("[✓] Report successfully delivered to Telegram.")
 
 # ==========================================
-# 4. PROMPT & GENERATION ENGINE
-# ==========================================
-def generate_report_with_calendar(session_name: str, raw_calendar_data: str) -> str:
-    assets_str = ", ".join(WATCHLIST)
-    
-    system_prompt = "You are an institutional quantitative macro analyst. Generate a session fundamental report formatted in Telegram HTML."
-    
-    user_prompt = f"""
-Generate a **{session_name} Session Fundamental Analysis Report**.
-
-Watchlist Assets: {assets_str}
-
-LIVE ECONOMIC CALENDAR DATA FOR TODAY:
-{raw_calendar_data}
-
-**STRICT FORMATTING RULES:**
-1. Use ONLY valid Telegram HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>. Do NOT use markdown (*).
-
-**REQUIRED REPORT SECTIONS:**
-1. <b>🏛️ {session_name.upper()} SESSION MACRO & LIVE CALENDAR</b>
-   - Analyze the provided live economic calendar releases (Actual vs Forecast/Prev).
-2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b>
-   - Score all {len(WATCHLIST)} watchlist assets based on live releases and monetary stance.
-3. <b>🎯 TOP CONFLUENCE SETUPS</b>
-   - Top 2 highest fundamental divergence pairings with entry direction and macro rationale.
-4. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
-   - Highlight >0.80 correlated pairs to avoid double exposure.
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.3
-    )
-    return response.choices[0].message.content
-
-# ==========================================
-# 5. MAIN EXECUTION PIPELINE
+# 5. MAIN EXECUTION ROUTINE
 # ==========================================
 if __name__ == "__main__":
     utc_hour = datetime.utcnow().hour
@@ -139,9 +126,10 @@ if __name__ == "__main__":
     print(f"[*] Fetching real-time economic calendar...")
     calendar_context = fetch_today_economic_events()
     
-    print(f"[*] Generating {session} Session Report with OpenAI...")
+    print(f"[*] Generating {session} Session Report using Gemini API...")
     try:
         report_html = generate_report_with_calendar(session, calendar_context)
         send_telegram_report(report_html)
     except Exception as e:
         print(f"[X] Pipeline execution failed: {e}")
+        sys.exit(1)  # Forces GitHub Actions to show a RED fail status on errors
