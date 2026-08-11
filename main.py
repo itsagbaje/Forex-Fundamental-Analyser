@@ -1,244 +1,341 @@
 import os
 import sys
+import argparse
 import io
-import re
 import requests
-from datetime import datetime
+import datetime
 import yfinance as yf
 import matplotlib.pyplot as plt
-import cot_reports as cot
 from google import genai
 
 # ==========================================
-# 1. CONFIGURATION & ENVIRONMENT VARIABLES
+# 1. ASSET WATCHLIST & CATEGORIZATION
 # ==========================================
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-FMP_API_KEY = os.getenv("FMP_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not GEMINI_API_KEY:
-    print("[X] Critical Error: GEMINI_API_KEY missing.")
-    sys.exit(1)
-
 WATCHLIST_TICKERS = {
+    # 🥇 Majors & Gold
     "EURUSD": "EURUSD=X",
     "GBPUSD": "GBPUSD=X",
-    "USDCHF": "USDCHF=X",
+    "AUDUSD": "AUDUSD=X",
+    "NZDUSD": "NZDUSD=X",
     "USDCAD": "USDCAD=X",
+    "USDCHF": "USDCHF=X",
+    "GOLD": "GC=F",
+    # 🪙 Crypto Assets
+    "BTCUSD": "BTC-USD",
+    "ETHUSD": "ETH-USD",
+    # 📈 Crosses & Indices
     "GBPJPY": "GBPJPY=X",
     "EURJPY": "EURJPY=X",
-    "JP225": "^N225",
-    "NAS100": "^NDX",
-    "SP500": "^GSPC",
-    "NZDUSD": "NZDUSD=X",
-    "AUDUSD": "AUDUSD=X",
     "EURCAD": "EURCAD=X",
     "GBPCAD": "GBPCAD=X",
-    "GOLD": "XAUUSD=X",
-    "SILVER": "XAGUSD=X",
+    "SILVER": "SI=F",
     "GER40": "^GDAXI",
-    "BTCUSD": "BTC-USD",
-    "ETHUSD": "ETH-USD"
+    "NAS100": "NQ=F",
+    "SP500": "ES=F",
+    "JP225": "^N225"
 }
 
-TARGET_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF"}
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+INTERMARKET_TICKERS = {
+    "DXY": "DX-Y.NYB",
+    "US10Y": "^TNX",
+    "VIX": "^VIX"
+}
 
 # ==========================================
-# 2. DATA FETCHING MODULES
+# 2. DECISION ENGINE & REGIME CLASSIFIER
 # ==========================================
-def fetch_intermarket_data() -> str:
-    symbols = {"US Dollar Index (DXY)": "DX=F", "US 10Y Yield": "^TNX"}
-    summary = []
-    for name, sym in symbols.items():
-        try:
-            ticker = yf.Ticker(sym)
-            hist = ticker.history(period="2d")
-            if len(hist) >= 2:
-                prev = hist['Close'].iloc[-2]
-                curr = hist['Close'].iloc[-1]
-                pct = ((curr - prev) / prev) * 100
-                summary.append(f"• {name}: {curr:.2f} ({pct:+.2f}% today)")
-        except Exception:
-            continue
-    return "\n".join(summary) if summary else "Intermarket yield data unavailable."
-
-def fetch_watchlist_prices_and_ranges() -> str:
-    """Fetches Open, High, Low, Close (OHLC) for EOD audit and intraday tracking."""
-    summary = []
-    print("[*] Fetching OHLC price ranges for watchlist assets...")
-    
-    for name, sym in WATCHLIST_TICKERS.items():
-        try:
-            ticker = yf.Ticker(sym)
-            hist = ticker.history(period="1d")
-            if not hist.empty:
-                open_p = hist['Open'].iloc[-1]
-                high_p = hist['High'].iloc[-1]
-                low_p = hist['Low'].iloc[-1]
-                close_p = hist['Close'].iloc[-1]
-                pct = ((close_p - open_p) / open_p) * 100
-                
-                fmt = ".2f" if close_p > 10 else ".5f"
-                summary.append(
-                    f"• {name}: Open {open_p:{fmt}} | High {high_p:{fmt}} | Low {low_p:{fmt}} | Close {close_p:{fmt}} ({pct:+.2f}%)"
-                )
-        except Exception as e:
-            print(f"[!] Warning: Could not fetch price for {name}: {e}")
-            continue
-            
-    return "\n".join(summary) if summary else "Price data unavailable."
-
-def fetch_today_economic_events() -> str:
-    today_str = datetime.utcnow().strftime("%Y-%m-%d")
-    url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today_str}&to={today_str}&apikey={FMP_API_KEY}"
+def classify_market_regime():
+    """
+    [Component 8: Regime Classifier]
+    Determines whether the market is currently RISK_DRIVEN, RATE_DRIVEN, or GROWTH_DIVERGENCE
+    using VIX level/slope and US 10-Year yield volatility.
+    """
     try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200 or not isinstance(response.json(), list):
-            return "No high impact calendar events scheduled today."
+        vix_data = yf.Ticker("^VIX").history(period="5d")['Close']
+        us10y_data = yf.Ticker("^TNX").history(period="5d")['Close']
+        
+        cur_vix = vix_data.iloc[-1] if not vix_data.empty else 18.0
+        prev_vix = vix_data.iloc[0] if len(vix_data) >= 5 else cur_vix
+        vix_5d_pct = ((cur_vix - prev_vix) / prev_vix) * 100 if prev_vix != 0 else 0.0
+        
+        cur_10y = us10y_data.iloc[-1] if not us10y_data.empty else 4.0
+        prev_10y = us10y_data.iloc[-2] if len(us10y_data) >= 2 else cur_10y
+        us10y_daily_move = abs(cur_10y - prev_10y)
+
+        if cur_vix > 22.0 or vix_5d_pct > 15.0:
+            regime = "RISK_DRIVEN"
+            desc = f"High Market Volatility (VIX: {cur_vix:.2f}, 5d Slope: {vix_5d_pct:+.1f}%). Safe-haven flows override fundamentals."
+        elif us10y_daily_move > 0.05: # >5 bps move on 10Y yields
+            regime = "RATE_DRIVEN"
+            desc = f"Active Yield Movements (US10Y at {cur_10y:.2f}%). Real interest rate differentials drive capital flows."
+        else:
+            regime = "GROWTH_DIVERGENCE"
+            desc = f"Calm Volatility Environment (VIX: {cur_vix:.2f}). Relative economic performance and PMI expectations drive pairs."
+
+        return regime, desc, cur_vix, cur_10y
+    except Exception as e:
+        return "RATE_DRIVEN", f"Default fallback regime (Data error: {str(e)})", 18.0, 4.25
+
+def fetch_market_data():
+    """Fetches real-time price data for all 18 watchlist assets."""
+    price_lines = []
+    all_tickers = list(WATCHLIST_TICKERS.values())
+    
+    try:
+        data = yf.download(tickers=all_tickers, period="5d", interval="1d", progress=False)['Close']
+        for name, ticker in WATCHLIST_TICKERS.items():
+            if ticker in data and not data[ticker].dropna().empty:
+                latest_price = data[ticker].dropna().iloc[-1]
+                prev_price = data[ticker].dropna().iloc[-2] if len(data[ticker].dropna()) > 1 else latest_price
+                change_pct = ((latest_price - prev_price) / prev_price) * 100
+                price_lines.append(f"• {name}: Price = {latest_price:.4f} (24h: {change_pct:+.2f}%)")
+            else:
+                price_lines.append(f"• {name}: Live Price unavailable")
+    except Exception as e:
+        price_lines.append(f"Error fetching prices: {str(e)}")
+        
+    return "\n".join(price_lines)
+
+def fetch_intermarket_data():
+    """[Component 1 & 4] Fetches DXY, Yields, and VIX metrics."""
+    lines = []
+    try:
+        data = yf.download(tickers=list(INTERMARKET_TICKERS.values()), period="5d", interval="1d", progress=False)['Close']
+        for name, ticker in INTERMARKET_TICKERS.items():
+            if ticker in data and not data[ticker].dropna().empty:
+                val = data[ticker].dropna().iloc[-1]
+                lines.append(f"{name}: {val:.3f}")
+    except Exception as e:
+        lines.append(f"Intermarket data fetch error: {str(e)}")
+    return " | ".join(lines) if lines else "DXY & Yields temporarily unavailable"
+
+def fetch_economic_calendar(api_key):
+    """
+    [Component 7: Event Risk Hierarchy]
+    Filters economic events and categorizes them by Tier 1 (Central Bank/CPI/NFP) vs Tier 2.
+    """
+    if not api_key:
+        return "Economic calendar API key missing. Operating on intermarket yields.", False
+    
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today}&to={today}&apikey={api_key}"
+    
+    tier1_keywords = ["Interest Rate", "Fed", "ECB", "BOE", "BOJ", "CPI", "Inflation", "Non Farm", "NFP", "GDP"]
+    has_tier1_today = False
+    
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            events = res.json()
+            high_impact = [e for e in events if e.get("impact") in ["High", "Medium"] and e.get("currency") in ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD"]]
+            if not high_impact:
+                return "No Tier 1 or Tier 2 economic events scheduled today.", False
             
-        filtered = []
-        for ev in response.json():
-            curr = str(ev.get("currency", "")).upper()
-            imp = str(ev.get("impact", "")).capitalize()
-            if curr in TARGET_CURRENCIES and imp in ["High", "Medium"]:
-                filtered.append(
-                    f"• [{curr} | {imp}] {ev.get('event')} (Actual: {ev.get('actual', 'Pending')} | Est: {ev.get('estimate', 'N/A')})"
-                )
-        return "\n".join(filtered[:15]) if filtered else "No major events scheduled."
-    except Exception as err:
-        return f"Calendar fetch error: {err}"
+            tier1_lines, tier2_lines = [], []
+            for ev in high_impact[:8]:
+                ev_name = ev.get('event', '')
+                is_t1 = any(kw.lower() in ev_name.lower() for kw in tier1_keywords) or ev.get('impact') == 'High'
+                line = f"• [{ev.get('currency')}] {ev_name} (Est: {ev.get('estimate', 'N/A')}, Prev: {ev.get('previous', 'N/A')})"
+                
+                if is_t1:
+                    tier1_lines.append(line)
+                    has_tier1_today = True
+                else:
+                    tier2_lines.append(line)
+            
+            output = "<b>TIER 1 EVENT RISKS TODAY:</b>\n" + ("\n".join(tier1_lines) if tier1_lines else "None")
+            output += "\n\n<b>TIER 2 SECONDARY DATA:</b>\n" + ("\n".join(tier2_lines) if tier2_lines else "None")
+            return output, has_tier1_today
+    except Exception as e:
+        return f"Calendar fetch failed: {str(e)}", False
+    return "No major calendar events available.", False
 
 # ==========================================
-# 3. GRAPHIC GENERATOR
+# 3. AI MACRO ENGINE & PROMPT SYNTHESIS
 # ==========================================
-def generate_and_send_scorecard_image(title_suffix: str):
-    fig, ax = plt.subplots(figsize=(8, 2), dpi=200)
-    fig.patch.set_facecolor('#0B132B')
-    ax.set_facecolor('#0B132B')
+def generate_report(mode: str, calendar_data: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str) -> str:
+    """Generates the structured session report applying the 10-Component Macro Decision Framework."""
+    client = genai.Client(api_key=api_key)
     
-    ax.text(0.5, 0.65, "APEX MACRO DESK", color='#D4AF37', fontsize=18, fontweight='bold', ha='center')
-    ax.text(0.5, 0.35, title_suffix.upper(), color='#00F0FF', fontsize=9, fontweight='bold', ha='center')
-    ax.text(0.5, 0.15, f"Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", color='#FFFFFF', fontsize=7, ha='center')
-    
-    ax.axis('off')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
-    buf.seek(0)
-    plt.close()
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-    files = {'photo': ('scorecard.png', buf, 'image/png')}
-    data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f'🏛️ <b>APEX MACRO DESK — {title_suffix.upper()}</b>', 'parse_mode': 'HTML'}
-    requests.post(url, data=data, files=files, timeout=15)
+    prompt = f"""
+You are the Lead Macro Strategist at Apex Macro Desk. Generate an educational, institutional-grade **{mode.upper()} Session Intelligence Report**.
 
-# ==========================================
-# 4. REPORT GENERATION (SESSION vs EOD RECAP)
-# ==========================================
-def generate_report(mode: str, calendar_data: str, intermarket_data: str, ohlc_prices: str) -> str:
-    if mode == "EOD":
-        prompt = f"""
-You are the Lead Macro Risk Officer at Apex Macro Desk. Generate the **END OF DAY SETUP PERFORMANCE & MACRO RECAP**.
-
-TODAY'S ACTUAL INTRADAY PRICE RANGES (OHLC):
+SYSTEM ENVIRONMENT & DECISION ENGINE PARAMETERS:
+- **CURRENT MARKET REGIME (Component 8):** {regime}
+- **REGIME CONTEXT:** {regime_desc}
+- **LIVE MARKET PRICES (ALL 18 ASSETS):**
 {ohlc_prices}
-
-INTERMARKET & YIELD CLOSING SUMMARY:
+- **INTERMARKET YIELDS & VOLATILITY:**
 {intermarket_data}
-
-ECONOMIC CALENDAR OUTCOMES:
+- **EVENT RISK HIERARCHY (Component 7):**
 {calendar_data}
 
-**STRICT FORMATTING RULES (TELEGRAM HTML):**
-1. Use ONLY valid HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
-2. Do NOT use markdown asterisks (*). EVERY <b> tag MUST have a corresponding </b> tag.
-3. Do NOT use raw '<' or '>' characters.
+**10-COMPONENT MACRO FRAMEWORK EVALUATION INSTRUCTIONS:**
+1. **RATE DIFFERENTIALS (Component 1):** Evaluate real rate gaps (nominal yield minus inflation) between currency pairs.
+2. **GROWTH DIFFERENTIALS (Component 2):** Assess relative GDP, PMI, and economic surprise index expectations.
+3. **CB REACTION FUNCTION (Component 3):** Gauge moves relative to what markets have priced in vs central bank stance.
+4. **RISK REGIME (Component 4):** Weight analysis based on active regime ({regime}). If RISK_DRIVEN, prioritize safe-haven flows; if RATE_DRIVEN, prioritize yield differentials.
+5. **POSITIONING & FLOWS (Component 5):** Factor institutional COT net bias where applicable.
+6. **RELATIVE SCORING RULE (Component 9):** Score factors as Currency A vs Currency B (relative divergence), never as absolute numbers.
+7. **CONVICTION RULE (Component 10):** Flag high conviction ONLY when Rates, Risk, and Flows agree. If factors conflict, assign ⚪ NEUTRAL / NO TRADE.
 
-**REQUIRED SECTIONS:**
-1. <b>🏛️ END OF DAY MACRO SUMMARY</b> (Brief overview of how economic events and yield movements drove risk sentiment today across London and NY)
-2. <b>🎯 TOP CONFLUENCE SETUPS AUDIT (LONDON & NY)</b> (Evaluate the top watchlist setups generated today. State: Pair | Session | Intended Bias | Actual Range Hit | Verdict: ✅ Played Out / ❌ Invalidated / ⏸️ Consolidated)
-3. <b>📊 DAY CLOSING SCORECARD REVIEW</b> (Brief summary of key gainers/losers relative to fundamental bias)
-4. <b>🔮 OVERNIGHT & ASIAN SESSION OUTLOOK</b>
+**TONE & READABILITY:**
+- Explain the "WHY" behind every single bias in friendly, conversational, educational English (1-2 sentences per asset).
+- Use ONLY Telegram HTML tags: <b>bold</b>, <i>italics</i>, and <code>code</code>. Do NOT use markdown asterisks (*) or raw '<' and '>' characters.
+
+**REQUIRED OUTPUT STRUCTURE:**
+
+🏛️ <b>APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+1. <b>🌐 DECISION ENGINE & MARKET REGIME</b>
+• <b>Active Regime:</b> <i><b>{regime}</b> — {regime_desc}</i>
+• <b>Dollar & Rates:</b> <i>2 friendly sentences explaining DXY and Treasury yields in plain English.</i>
+• <b>Market Vibe:</b> <i>2 friendly sentences explaining overall risk sentiment.</i>
+
+2. <b>🥇 MAJORS & GOLD (PRIMARY FOCUS)</b>
+(Must evaluate ALL 7 assets in this exact order: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, GOLD)
+Format each asset as:
+<b>[TICKER]</b> [🟢 BULLISH / 🔴 BEARISH / ⚪ NEUTRAL] | Level: <code>[Live Price]</code>
+↳ <b>Why?</b> <i>1-2 friendly sentences explaining the exact macro reasoning (yield gaps, CB stance, risk flows) behind this bias.</i>
+
+3. <b>🪙 CRYPTO ASSETS</b>
+(Must evaluate ALL 2 assets in this exact order: BTCUSD, ETHUSD)
+Format each same as above.
+
+4. <b>📈 CROSSES & INDICES</b>
+(Must evaluate ALL 9 assets in this exact order: GBPJPY, EURJPY, EURCAD, GBPCAD, SILVER, GER40, NAS100, SP500, JP225)
+Format each same as above.
+
+5. <b>🎯 APEX SESSION TRIGGER MATRIX</b>
+• Identify the <b>3 Highest-Conviction Setups</b> where at least 3 independent framework factors align.
+Format as:
+  - <b>[ASSET]</b> [BUY/SELL]
+    • <b>Trigger Level:</b> <code>[Price]</code>
+    • <b>Target:</b> <code>[Price]</code> | <b>Invalidation:</b> <code>[Price]</code>
+    • <b>Game Plan:</b> <i>1 sentence explaining why this trade aligns with current macro differentials.</i>
 """
-    else:
-        prompt = f"""
-You are an institutional macro strategist at Apex Macro Desk. Generate the **{mode} Session Report**.
 
-LIVE REAL-TIME WATCHLIST SPOT PRICES:
-{ohlc_prices}
-
-REAL-TIME INTERMARKET YIELDS & DXY:
-{intermarket_data}
-
-LIVE ECONOMIC CALENDAR:
-{calendar_data}
-
-**STRICT FORMATTING RULES (TELEGRAM HTML):**
-1. Use ONLY valid HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
-2. Do NOT use markdown asterisks (*). EVERY <b> tag MUST have a corresponding </b> tag.
-3. Anchor execution zones strictly to the live prices provided.
-
-**REQUIRED SECTIONS:**
-1. <b>🏛️ {mode.upper()} SESSION MACRO & YIELD DRIVERS</b>
-2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b>
-3. <b>🔥 TOP 5 TO 7 FOCUS ASSETS (FUNDAMENTAL CONFLUENCE)</b>
-4. <b>🎯 TOP CONFLUENCE SETUPS</b>
-5. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
-"""
-
-    response = gemini_client.models.generate_content(
-        model="gemini-3.5-flash",
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
         contents=prompt
     )
     return response.text
 
 # ==========================================
-# 5. TELEGRAM DISPATCH & MAIN EXECUTION
+# 4. BANNER IMAGE GENERATOR
 # ==========================================
-def send_telegram_text(html_content: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    chunks = [html_content[i:i+4000] for i in range(0, len(html_content), 4000)]
+def generate_banner(mode: str, regime: str) -> io.BytesIO:
+    """Generates a dark-mode banner graphic featuring the active regime badge."""
+    fig, ax = plt.subplots(figsize=(8, 2.5), facecolor='#0D1117')
+    ax.set_facecolor('#0D1117')
+    ax.axis('off')
 
-    for chunk in chunks:
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML", "disable_web_page_preview": True}
-        res = requests.post(url, json=payload, timeout=15)
+    title = "APEX MACRO DESK"
+    subtitle = f"{mode.upper()} SESSION INTELLIGENCE — LIVE REPORT"
+    regime_badge = f"ACTIVE REGIME: {regime}"
+    date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d | %H:%M UTC")
+
+    ax.text(0.5, 0.70, title, color='#58A6FF', fontsize=22, fontweight='bold', ha='center', va='center')
+    ax.text(0.5, 0.48, subtitle, color='#FFFFFF', fontsize=12, fontweight='bold', ha='center', va='center')
+    ax.text(0.5, 0.28, regime_badge, color='#3FB950', fontsize=10, fontweight='bold', ha='center', va='center')
+    ax.text(0.5, 0.12, date_str, color='#8B949E', fontsize=8, ha='center', va='center')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=150, facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+# ==========================================
+# 5. DISPATCH TO TELEGRAM
+# ==========================================
+def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.BytesIO):
+    """Posts image banner and HTML report to Telegram channel."""
+    photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+    files = {'photo': ('banner.png', image_buf, 'image/png')}
+    
+    if len(message) > 1000:
+        # Send Photo first
+        requests.post(photo_url, data={'chat_id': chat_id}, files=files, timeout=15)
+        # Send Message text as separate message
+        msg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': True
+        }
+        res = requests.post(msg_url, json=payload, timeout=15)
+    else:
+        payload = {
+            'chat_id': chat_id,
+            'caption': message,
+            'parse_mode': 'HTML'
+        }
+        res = requests.post(photo_url, data=payload, files=files, timeout=15)
         
-        if res.status_code == 400 and "can't parse entities" in res.text:
-            print("[!] HTML parse error detected. Falling back to plain text...")
-            plain_text = re.sub(r'<[^>]*>', '', chunk)
-            payload_fallback = {"chat_id": TELEGRAM_CHAT_ID, "text": plain_text, "disable_web_page_preview": True}
-            requests.post(url, json=payload_fallback, timeout=15)
-        elif res.status_code != 200:
-            raise RuntimeError(f"Telegram Error: {res.text}")
+    return res.status_code == 200
+
+# ==========================================
+# 6. CLI EXECUTION ENTRY POINT
+# ==========================================
+def main():
+    parser = argparse.ArgumentParser(description="Apex Macro Desk 10-Component Decision System")
+    parser.add_argument("--mode", type=str, default="london", choices=["london", "ny", "eod", "update"], help="Session mode")
+    parser.add_argument("--dry-run", action="store_true", help="Print report without sending to Telegram")
+    args = parser.parse_args()
+
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    fmp_key = os.getenv("FMP_API_KEY", "")
+
+    if not gemini_key:
+        print("ERROR: GEMINI_API_KEY environment variable is not set.")
+        sys.exit(1)
+
+    print(f"🚀 Launching Apex Macro Desk Pipeline [{args.mode.upper()} SESSION]...")
+    
+    print("🧠 Running Regime Classifier (Component 8)...")
+    regime, regime_desc, vix_val, yield_val = classify_market_regime()
+    print(f"   ↳ Active Regime: {regime} | VIX: {vix_val:.2f} | US10Y: {yield_val:.2f}%")
+    
+    print("📊 Ingesting Market Prices (18 Assets)...")
+    ohlc_prices = fetch_market_data()
+    
+    print("🌐 Ingesting Intermarket Data & Yields...")
+    intermarket_data = fetch_intermarket_data()
+    
+    print("📅 Fetching Economic Calendar & Evaluating Event Risk Hierarchy...")
+    calendar_data, has_tier1 = fetch_economic_calendar(fmp_key)
+
+    print("🤖 Synthesizing Institutional Macro Report with Gemini...")
+    report_text = generate_report(args.mode, calendar_data, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
+
+    if args.dry_run:
+        print("\n================ [ DRY RUN REPORT OUTPUT ] ================\n")
+        print(report_text)
+        print("\n===========================================================\n")
+        
+        summary_file = os.getenv("GITHUB_STEP_SUMMARY")
+        if summary_file:
+            with open(summary_file, "a") as f:
+                f.write(f"### Dry-Run Output [{args.mode.upper()}]\n```html\n{report_text}\n```\n")
+    else:
+        if not bot_token or not chat_id:
+            print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set for live posting.")
+            sys.exit(1)
+
+        print("🖼️ Generating Session Banner...")
+        banner_buf = generate_banner(args.mode, regime)
+
+        print("📡 Broadcasting Session Intelligence to Telegram...")
+        success = send_telegram(bot_token, chat_id, report_text, banner_buf)
+        if success:
+            print("✅ Broadcast sent successfully!")
+        else:
+            print("❌ Broadcast failed. Verify bot permissions and HTML tag formatting.")
 
 if __name__ == "__main__":
-    current_hour = datetime.utcnow().hour
-    
-    # Determine mode based on UTC run time
-    if current_hour >= 20:
-        mode = "EOD"
-        banner_title = "End of Day Setup Performance Recap"
-    elif current_hour >= 12:
-        mode = "New York"
-        banner_title = "New York Session Intelligence"
-    else:
-        mode = "London"
-        banner_title = "London Session Intelligence"
-        
-    print(f"[*] Executing Apex Macro Pipeline for {mode} Mode...")
-    
-    try:
-        generate_and_send_scorecard_image(banner_title)
-        
-        market_ctx = fetch_intermarket_data()
-        ohlc_ctx = fetch_watchlist_prices_and_ranges()
-        cal_ctx = fetch_today_economic_events()
-        
-        report = generate_report(mode, cal_ctx, market_ctx, ohlc_ctx)
-        
-        send_telegram_text(report)
-        print(f"[✓] Apex Macro {mode} Report delivered successfully.")
-    except Exception as e:
-        print(f"[X] Pipeline execution failed: {e}")
-        sys.exit(1)
+    main()
