@@ -94,9 +94,10 @@ LIVE ECONOMIC CALENDAR DATA FOR TODAY:
 4. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
 """
 
-    response = client.models.generate_content(
-    model="gemini-1.5-flash", contents=prompt
-)
+    response = gemini_client.models.generate_content(
+        model="gemini-1.5-flash",
+        contents=prompt
+    )
     return response.text
 
 # ==========================================
@@ -137,4 +138,4 @@ if __name__ == "__main__":
         send_telegram_report(report_html)
     except Exception as e:
         print(f"[X] Pipeline execution failed: {e}")
-        sys.exit(1)  # Forces GitHub Actions to show a RED fail status on errors
+        sys.exit(1)
