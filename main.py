@@ -1,7 +1,11 @@
 import os
 import sys
+import io
 import requests
 from datetime import datetime
+import yfinance as yf
+import matplotlib.pyplot as plt
+import cot_reports as cot
 from google import genai
 
 # ==========================================
@@ -12,10 +16,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Environment Variable Guard Check
 if not GEMINI_API_KEY:
-    print("[X] Critical Error: GEMINI_API_KEY environment variable is missing or empty.")
-    print("Please verify your GitHub Repository Secrets name matches 'GEMINI_API_KEY'.")
+    print("[X] Critical Error: GEMINI_API_KEY missing.")
     sys.exit(1)
 
 WATCHLIST = [
@@ -23,77 +25,140 @@ WATCHLIST = [
     "JP225", "NAS100", "SP500", "NZDUSD", "AUDUSD", "EURCAD",
     "GBPCAD", "GOLD", "SILVER", "GER40", "BTCUSD", "ETHUSD"
 ]
-
 TARGET_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF"}
 
-# Initialize Official Gemini Client
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 2. ECONOMIC CALENDAR DATA FETCHING
+# 2. DATA FETCHING MODULES
 # ==========================================
+def fetch_intermarket_data() -> str:
+    """Fetches real-time DXY, US10Y Yields, and Gold momentum via yfinance."""
+    symbols = {"US Dollar Index (DXY)": "DX-Y.NY", "US 10Y Yield": "^TNX", "Gold Futures": "GC=F"}
+    summary = []
+    
+    for name, sym in symbols.items():
+        try:
+            ticker = yf.Ticker(sym)
+            hist = ticker.history(period="2d")
+            if len(hist) >= 2:
+                prev = hist['Close'].iloc[-2]
+                curr = hist['Close'].iloc[-1]
+                pct = ((curr - prev) / prev) * 100
+                summary.append(f"• {name}: {curr:.2f} ({pct:+.2f}% today)")
+        except Exception:
+            continue
+            
+    return "\n".join(summary) if summary else "Intermarket yield data unavailable."
+
 def fetch_today_economic_events() -> str:
-    """Fetches real-time economic calendar from Financial Modeling Prep API."""
+    """Fetches economic calendar from FMP API."""
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
     url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today_str}&to={today_str}&apikey={FMP_API_KEY}"
     
     try:
         response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            return "Unable to pull live calendar data. Falling back to macro model estimates."
-        
-        events = response.json()
-        if not isinstance(events, list) or not events:
-            return "No major macroeconomic events scheduled for today."
+        if response.status_code != 200 or not isinstance(response.json(), list):
+            return "No high impact calendar events scheduled today."
             
-        filtered_events = []
-        for ev in events:
-            currency = str(ev.get("currency", "")).upper()
-            impact = str(ev.get("impact", "")).capitalize()
-            event_name = ev.get("event", "Economic Event")
-            
-            if currency in TARGET_CURRENCIES and impact in ["High", "Medium"]:
-                actual = ev.get("actual") if ev.get("actual") is not None else "Pending"
-                estimate = ev.get("estimate") if ev.get("estimate") is not None else "N/A"
-                previous = ev.get("previous") if ev.get("previous") is not None else "N/A"
-                date_time = ev.get("date", "")
-                
-                filtered_events.append(
-                    f"• [{currency} | {impact} Impact] {event_name} @ {date_time} UTC "
-                    f"(Actual: {actual} | Forecast: {estimate} | Prev: {previous})"
+        filtered = []
+        for ev in response.json():
+            curr = str(ev.get("currency", "")).upper()
+            imp = str(ev.get("impact", "")).capitalize()
+            if curr in TARGET_CURRENCIES and imp in ["High", "Medium"]:
+                filtered.append(
+                    f"• [{curr} | {imp}] {ev.get('event')} @ {ev.get('date')} UTC "
+                    f"(Actual: {ev.get('actual', 'Pending')} | Est: {ev.get('estimate', 'N/A')})"
                 )
-                
-        if not filtered_events:
-            return "No high/medium impact calendar events scheduled for target currencies today."
-            
-        return "\n".join(filtered_events[:15])
-        
+        return "\n".join(filtered[:15]) if filtered else "No major events scheduled."
     except Exception as err:
-        return f"Economic calendar fetch error: {err}"
+        return f"Calendar fetch error: {err}"
+
+def fetch_cot_positioning() -> str:
+    """Fetches current year's CFTC Traders in Financial Futures (TFF) positioning."""
+    try:
+        current_year = datetime.utcnow().year
+        df = cot.cot_year(year=current_year, cot_report_type='traders_in_financial_futures_fut')
+        
+        if df.empty:
+            return "CFTC positioning data currently unavailable."
+
+        latest_date = df['As_of_Date_In_Form_YYMMDD'].iloc[-1]
+        latest_df = df[df['As_of_Date_In_Form_YYMMDD'] == latest_date]
+
+        contracts = {
+            "USD (DXY)": "CHICAGO MERCANTILE EXCHANGE",
+            "EUR": "EURO FX",
+            "GBP": "BRITISH POUND",
+            "JPY": "JAPANESE YEN",
+            "GOLD": "GOLD"
+        }
+
+        summary = [f"<b>[CFTC Institutional Positioning - Week of {latest_date}]</b>"]
+        for label, match in contracts.items():
+            row = latest_df[latest_df['Market_and_Exchange_Names'].str.contains(match, case=False, na=False)]
+            if not row.empty:
+                longs = row['Lev_Money_Positions_Long_All'].values[0]
+                shorts = row['Lev_Money_Positions_Short_All'].values[0]
+                net = longs - shorts
+                sentiment = "Net Long 🟢" if net > 0 else "Net Short 🔴"
+                summary.append(f"• {label}: {sentiment} ({net:+,d} contracts)")
+
+        return "\n".join(summary)
+    except Exception as err:
+        return f"CFTC COT data fetch bypassed: {err}"
 
 # ==========================================
-# 3. REPORT GENERATION VIA GEMINI
+# 3. SCORECARD GRAPHIC GENERATOR
 # ==========================================
-def generate_report_with_calendar(session_name: str, raw_calendar_data: str) -> str:
+def generate_and_send_scorecard_image():
+    """Generates a professional dark-mode graphic banner for the desk."""
+    fig, ax = plt.subplots(figsize=(8, 2), dpi=200)
+    fig.patch.set_facecolor('#0B132B')
+    ax.set_facecolor('#0B132B')
+    
+    ax.text(0.5, 0.65, "APEX MACRO DESK", color='#D4AF37', fontsize=18, fontweight='bold', ha='center')
+    ax.text(0.5, 0.35, "INSTITUTIONAL CROSS-ASSET INTELLIGENCE", color='#00F0FF', fontsize=9, fontweight='bold', ha='center')
+    ax.text(0.5, 0.15, f"Session Briefing | {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", color='#FFFFFF', fontsize=7, ha='center')
+    
+    ax.axis('off')
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close()
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    files = {'photo': ('scorecard.png', buf, 'image/png')}
+    data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': '🏛️ <b>APEX MACRO DESK — SESSION BRIEFING</b>', 'parse_mode': 'HTML'}
+    requests.post(url, data=data, files=files, timeout=15)
+
+# ==========================================
+# 4. REPORT GENERATION VIA GEMINI
+# ==========================================
+def generate_report(session_name: str, calendar_data: str, intermarket_data: str, cot_data: str) -> str:
     prompt = f"""
-You are an institutional macro quantitative strategist. Generate a **{session_name} Session Fundamental Analysis Report**.
+You are an institutional macro strategist at Apex Macro Desk. Generate the **{session_name} Session Report**.
 
 Watchlist Assets: {", ".join(WATCHLIST)}
 
-LIVE ECONOMIC CALENDAR DATA FOR TODAY:
-{raw_calendar_data}
+REAL-TIME INTERMARKET YIELDS & DXY:
+{intermarket_data}
+
+WEEKLY INSTITUTIONAL COT POSITIONING:
+{cot_data}
+
+LIVE ECONOMIC CALENDAR:
+{calendar_data}
 
 **STRICT FORMATTING RULES:**
-1. Use ONLY valid Telegram HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>.
-2. Do NOT use markdown asterisks (*). Do NOT use raw < or > unless forming valid HTML tags.
+1. Use ONLY valid Telegram HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>preformatted</pre>. Do NOT use markdown asterisks (*).
 
-**REQUIRED REPORT SECTIONS:**
-1. <b>🏛️ {session_name.upper()} SESSION MACRO & LIVE CALENDAR</b>
-2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b> (Include all 18 watchlist assets)
-3. <b>🎯 TOP CONFLUENCE SETUPS</b>
-4. <b>🔥 TOP 5 TO 7 FOCUS ASSETS (FUNDAMENTAL CONFLUENCE)</b>
-   - Identify specifically 5 to 7 high-conviction assets from the watchlist to concentrate on for this session based purely on macroeconomic drivers, central bank divergence, and today's economic calendar.
-   - For each asset, state the bias (Bullish/Bearish) and a concise fundamental justification.
+**REQUIRED SECTIONS:**
+1. <b>🏛️ {session_name.upper()} SESSION MACRO & YIELD DRIVERS</b>
+2. <b>📊 INSTITUTIONAL SCORECARD (-10 to +10)</b> (List all 18 watchlist assets with signed scores and 1-word fundamental drivers)
+3. <b>🔥 TOP 5 TO 7 FOCUS ASSETS (FUNDAMENTAL CONFLUENCE)</b> (Identify specifically 5 to 7 high-conviction assets; state Pair, Bias, Fundamental Justification, Key Execution Zone)
+4. <b>🎯 TOP CONFLUENCE SETUPS</b>
 5. <b>⚠️ CORRELATION & EXPOSURE GUARDRAIL</b>
 """
 
@@ -104,41 +169,33 @@ LIVE ECONOMIC CALENDAR DATA FOR TODAY:
     return response.text
 
 # ==========================================
-# 4. TELEGRAM DISPATCH HELPER
+# 5. TELEGRAM DISPATCH & MAIN EXECUTION
 # ==========================================
-def send_telegram_report(html_content: str):
+def send_telegram_text(html_content: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    
-    # Chunk long reports to fit Telegram's limit
     chunks = [html_content[i:i+4000] for i in range(0, len(html_content), 4000)]
 
     for chunk in chunks:
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": chunk,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True
-        }
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML", "disable_web_page_preview": True}
         res = requests.post(url, json=payload, timeout=15)
         if res.status_code != 200:
-            raise RuntimeError(f"Telegram Delivery Error ({res.status_code}): {res.text}")
-            
-    print("[✓] Report successfully delivered to Telegram.")
+            raise RuntimeError(f"Telegram Error: {res.text}")
 
-# ==========================================
-# 5. MAIN EXECUTION ROUTINE
-# ==========================================
 if __name__ == "__main__":
-    utc_hour = datetime.utcnow().hour
-    session = "London" if utc_hour < 12 else "New York"
-
-    print(f"[*] Fetching real-time economic calendar...")
-    calendar_context = fetch_today_economic_events()
+    session = "London" if datetime.utcnow().hour < 12 else "New York"
+    print(f"[*] Executing Apex Macro Pipeline for {session} Session...")
     
-    print(f"[*] Generating {session} Session Report using Gemini API...")
     try:
-        report_html = generate_report_with_calendar(session, calendar_context)
-        send_telegram_report(report_html)
+        generate_and_send_scorecard_image()
+        
+        market_ctx = fetch_intermarket_data()
+        cal_ctx = fetch_today_economic_events()
+        cot_ctx = fetch_cot_positioning()
+        
+        report = generate_report(session, cal_ctx, market_ctx, cot_ctx)
+        
+        send_telegram_text(report)
+        print("[✓] Apex Macro Report delivered successfully.")
     except Exception as e:
         print(f"[X] Pipeline execution failed: {e}")
         sys.exit(1)
