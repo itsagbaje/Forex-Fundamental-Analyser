@@ -2,17 +2,17 @@ name: Apex Macro Desk Intelligence
 
 on:
   schedule:
-    # 🇬🇧 London Session Open: 06:30 UTC
-    - cron: '30 6 * * 1-5'
+    # 🇬🇧 London Session Open (~06:30 GMT+1) -> 05:24 UTC (Off-peak minute 24)
+    - cron: '24 5 * * 1-5'
     
-    # 🇺🇸 New York Session Open: 12:30 UTC
-    - cron: '30 12 * * 1-5'
+    # 🇺🇸 New York Session Open (~12:30 GMT+1) -> 11:24 UTC (Off-peak minute 24)
+    - cron: '24 11 * * 1-5'
     
-    # 🌆 End of Day (EOD) Summary: 21:00 UTC
-    - cron: '0 21 * * 1-5'
+    # 🌆 End of Day (EOD) Summary (~21:00 GMT+1) -> 19:54 UTC (Off-peak minute 54)
+    - cron: '54 19 * * 1-5'
 
-    # ⚡ Automated Post-News Intraday Scanner: Hourly between 08:00 and 20:00 UTC
-    - cron: '0 8-20 * * 1-5'
+    # ⚡ Automated Post-News Intraday Scanner (Hourly off-peak at minute 17)
+    - cron: '17 7-18 * * 1-5'
 
   workflow_dispatch:
     inputs:
@@ -48,27 +48,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install yfinance matplotlib google-genai requests
 
-      - name: Run Apex Macro Engine (Scheduled)
+      - name: Determine & Run Macro Engine (Scheduled)
         if: github.event_name == 'schedule'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TRIGGER_CRON: ${{ github.event.schedule }}
         run: |
-          MINUTE=$(date -u +%M)
-          HOUR=$(date -u +%H)
+          echo "⏰ Cron Trigger Matched: $TRIGGER_CRON"
           
-          # Exact scheduled session opens
-          if [ "$HOUR" -eq "06" ] && [ "$MINUTE" -ge "25" ] && [ "$MINUTE" -le "35" ]; then
-            python main.py --mode london
-          elif [ "$HOUR" -eq "12" ] && [ "$MINUTE" -ge "25" ] && [ "$MINUTE" -le "35" ]; then
-            python main.py --mode ny
-          elif [ "$HOUR" -eq "21" ] && [ "$MINUTE" -le "10" ]; then
-            python main.py --mode eod
-          else
-            # Hourly intraday volatility & post-news check
-            python main.py --mode auto_check
-          fi
+          case "$TRIGGER_CRON" in
+            "24 5 * * 1-5")
+              echo "🚀 Executing London Session Report..."
+              python main.py --mode london
+              ;;
+            "24 11 * * 1-5")
+              echo "🚀 Executing New York Session Report..."
+              python main.py --mode ny
+              ;;
+            "54 19 * * 1-5")
+              echo "🚀 Executing End of Day (EOD) Wrap..."
+              python main.py --mode eod
+              ;;
+            *)
+              echo "⚡ Running Hourly Volatility & Post-News Check..."
+              python main.py --mode auto_check
+              ;;
+          esac
 
       - name: Run Apex Macro Engine (Manual Dispatch)
         if: github.event_name == 'workflow_dispatch'
