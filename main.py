@@ -71,20 +71,41 @@ def classify_market_regime():
 
 def fetch_market_data():
     price_lines = []
+    momentum_triggers = []
     all_tickers = list(WATCHLIST_TICKERS.values())
+    
     try:
-        data = yf.download(tickers=all_tickers, period="5d", interval="1d", progress=False)['Close']
+        # Pull 5 days of 15-minute bars to capture live intraday price action
+        data = yf.download(tickers=all_tickers, period="5d", interval="15m", progress=False)['Close']
+        
         for name, ticker in WATCHLIST_TICKERS.items():
             if ticker in data and not data[ticker].dropna().empty:
-                latest_price = data[ticker].dropna().iloc[-1]
-                prev_price = data[ticker].dropna().iloc[-2] if len(data[ticker].dropna()) > 1 else latest_price
+                clean_series = data[ticker].dropna()
+                latest_price = clean_series.iloc[-1]
+                
+                # Get price from 24 hours ago (96 fifteen-minute bars)
+                prev_price = clean_series.iloc[-96] if len(clean_series) >= 96 else clean_series.iloc[0]
                 change_pct = ((latest_price - prev_price) / prev_price) * 100
-                price_lines.append(f"• {name}: Price = {latest_price:.4f} (24h Change: {change_pct:+.2f}%)")
+                
+                # Detect intraday momentum (last 4 bars / 1 hour shift)
+                one_hour_ago = clean_series.iloc[-4] if len(clean_series) >= 4 else latest_price
+                hourly_pct = ((latest_price - one_hour_ago) / one_hour_ago) * 100
+                
+                if abs(hourly_pct) >= 0.40:
+                    direction = "RALLYING" if hourly_pct > 0 else "PLUMMETING"
+                    momentum_triggers.append(f"{name} ({hourly_pct:+.2f}% in 1h — {direction})")
+
+                momentum_tag = "🚀 PUMPING" if hourly_pct > 0.3 else ("🔻 DUMPING" if hourly_pct < -0.3 else "⚖️ STABLE")
+                
+                price_lines.append(
+                    f"• {name}: Price = {latest_price:.4f} (24h: {change_pct:+.2f}% | 1h Momentum: {hourly_pct:+.2f}% [{momentum_tag}])"
+                )
             else:
                 price_lines.append(f"• {name}: Price updating...")
     except Exception as e:
         price_lines.append(f"Price fetch issue: {str(e)}")
-    return "\n".join(price_lines)
+        
+    return "\n".join(price_lines), momentum_triggers
 
 def fetch_intermarket_data():
     lines = []
@@ -101,28 +122,34 @@ def fetch_intermarket_data():
 # ==========================================
 # 3. AI MACRO ENGINE & PROMPT SYNTHESIS
 # ==========================================
-def generate_report(mode: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str) -> str:
+def generate_report(mode: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str, trigger_reason: str = "") -> str:
     client = genai.Client(api_key=api_key)
+
+    is_flash_update = mode in ["update", "auto_check"]
+    header_title = "⚡ APEX MACRO DESK — FLASH POST-NEWS MARKET UPDATE" if is_flash_update else f"🏛️ APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE"
+
+    flash_context = f"\n⚠️ **FLASH UPDATE TRIGGERED BY:** {trigger_reason}\n" if is_flash_update and trigger_reason else ""
 
     prompt = f"""
 You are the Chief Market Analyst at Apex Macro Desk. Create an easy-to-read, beginner-friendly **{mode.upper()} SESSION MARKET REPORT**.
 
 WRITING & FORMATTING RULES:
-1. **NO SHORTCODES:** Do NOT use abbreviations like "Comp 1", "Comp 8", or "Comp 1 & 3". Always write out the FULL, complete component names in plain, professional English.
+1. **NO SHORTCODES:** Always write out the FULL, complete component names in plain, professional English.
 2. **SIMPLE LANGUAGE:** Explain concepts in clear everyday English. Avoid dense Wall Street jargon.
-3. **VISUAL SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections, paragraphs, and individual asset breakdowns so the text is spacious and readable on phone screens.
+3. **VISUAL SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections, paragraphs, and individual asset breakdowns.
 4. **HTML STYLING:** Use <b>BOLD</b> for titles and tickers, <i>italics</i> for explanations, and <code>code tags</code> for prices/times. Do NOT use markdown asterisks (`*`) or unescaped `<` or `>` symbols.
 
 SYSTEM INPUT DATA:
 - **ACTIVE REGIME:** {regime} ({regime_desc})
-- **LIVE PRICES (14 TARGET ASSETS):**
+{flash_context}
+- **LIVE INTRADAY PRICES (14 TARGET ASSETS):**
 {ohlc_prices}
 - **INTERMARKET INDICATORS:**
 {intermarket_data}
 
 REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
-🏛️ <b>APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE</b>
+{header_title}
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>1. 🌐 DECISION ENGINE & MACRO FRAMEWORK OVERVIEW</b>
@@ -137,7 +164,7 @@ REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
 • <b>Market Sentiment & Volatility Dynamics:</b> <i>2 plain English sentences assessing fear levels, risk-on/risk-off sentiment, and VIX status.</i>
 
-• <b>Institutional Order Flow & Positioning:</b> <i>2 plain English sentences on big money movements and order flows for today.</i>
+• <b>Institutional Order Flow & Positioning:</b> <i>2 plain English sentences on big money movements and order flows right now.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -147,7 +174,7 @@ REQUIRED TELEGRAM OUTPUT STRUCTURE:
 Format every single asset with double line spacing like this:
 
 <b>EURUSD</b> 🟢 BULLISH | Price: <code>1.0850</code>
-↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining drivers based on interest rates and central bank stance.</i>
+↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining drivers based on recent news and yields.</i>
 
 <b>GBPUSD</b> 🔴 BEARISH | Price: <code>1.2620</code>
 ↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining drivers.</i>
@@ -213,12 +240,12 @@ def generate_banner(mode: str, regime: str) -> io.BytesIO:
     ax.axis('off')
 
     title = "APEX MACRO DESK"
-    subtitle = f"{mode.upper()} SESSION INTELLIGENCE — LIVE REPORT"
+    subtitle = "FLASH POST-NEWS UPDATE" if mode in ["update", "auto_check"] else f"{mode.upper()} SESSION INTELLIGENCE"
     regime_badge = f"ACTIVE REGIME: {regime}"
     date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d | %H:%M UTC")
 
     ax.text(0.5, 0.70, title, color='#58A6FF', fontsize=22, fontweight='bold', ha='center', va='center')
-    ax.text(0.5, 0.48, subtitle, color='#FFFFFF', fontsize=12, fontweight='bold', ha='center', va='center')
+    ax.text(0.5, 0.48, subtitle, color='#FF7B72' if mode in ["update", "auto_check"] else '#FFFFFF', fontsize=12, fontweight='bold', ha='center', va='center')
     ax.text(0.5, 0.28, regime_badge, color='#3FB950', fontsize=10, fontweight='bold', ha='center', va='center')
     ax.text(0.5, 0.12, date_str, color='#8B949E', fontsize=8, ha='center', va='center')
 
@@ -279,7 +306,7 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
 # ==========================================
 def main():
     parser = argparse.ArgumentParser(description="Apex Macro Desk Decision System")
-    parser.add_argument("--mode", type=str, default="all", choices=["all", "london", "ny", "eod", "update"], help="Session mode")
+    parser.add_argument("--mode", type=str, default="all", choices=["all", "london", "ny", "eod", "update", "auto_check"], help="Session mode")
     args = parser.parse_args()
 
     gemini_key = os.getenv("GEMINI_API_KEY")
@@ -294,23 +321,37 @@ def main():
         print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables must be set.")
         sys.exit(1)
 
-    modes_to_run = ["london", "ny", "eod", "update"] if args.mode == "all" else [args.mode]
-
     print("🧠 Running Regime Classifier...")
     regime, regime_desc, vix_val, yield_val = classify_market_regime()
     print(f"   ↳ Active Regime: {regime} | VIX: {vix_val:.2f} | US10Y: {yield_val:.2f}%")
 
-    print("📊 Ingesting Market Prices (14 Target Assets)...")
-    ohlc_prices = fetch_market_data()
+    print("📊 Ingesting Intraday Market Data (14 Target Assets)...")
+    ohlc_prices, momentum_triggers = fetch_market_data()
 
     print("🌐 Ingesting Intermarket Data & Yields...")
     intermarket_data = fetch_intermarket_data()
+
+    # Automatic Post-News Volatility Evaluation
+    trigger_reason = ""
+    if args.mode == "auto_check":
+        if momentum_triggers or vix_val > 22.0:
+            reasons = momentum_triggers + ([f"VIX Spike ({vix_val:.2f})"] if vix_val > 22.0 else [])
+            trigger_reason = ", ".join(reasons)
+            print(f"⚡ VOLATILITY TRIGGER DETECTED: {trigger_reason}")
+            modes_to_run = ["update"]
+        else:
+            print("⚖️ Market stable. No 1h momentum or news surge detected (>0.40%). Skipping automatic broadcast.")
+            sys.exit(0)
+    elif args.mode == "all":
+        modes_to_run = ["london", "ny", "eod"]
+    else:
+        modes_to_run = [args.mode]
 
     for current_mode in modes_to_run:
         print(f"\n🚀 Processing [{current_mode.upper()} SESSION]...")
 
         print("🤖 Synthesizing Institutional Macro Report with Gemini...")
-        report_text = generate_report(current_mode, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key)
+        report_text = generate_report(current_mode, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key, trigger_reason)
 
         print("🖼️ Generating Session Banner Graphic...")
         banner_buf = generate_banner(current_mode, regime)
