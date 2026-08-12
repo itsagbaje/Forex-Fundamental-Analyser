@@ -83,7 +83,7 @@ def fetch_market_data():
                 clean_series = data[ticker].dropna()
                 latest_price = clean_series.iloc[-1]
                 
-                # Get price from 24 hours ago (96 fifteen-minute bars)
+                # Price from 24 hours ago (96 fifteen-minute bars)
                 prev_price = clean_series.iloc[-96] if len(clean_series) >= 96 else clean_series.iloc[0]
                 change_pct = ((latest_price - prev_price) / prev_price) * 100
                 
@@ -125,12 +125,97 @@ def fetch_intermarket_data():
 def generate_report(mode: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str, trigger_reason: str = "") -> str:
     client = genai.Client(api_key=api_key)
 
+    # Dynamic date/time block to prevent channel report confusion
+    now_utc = datetime.datetime.utcnow()
+    date_str = now_utc.strftime("%A, %d %b %Y").upper()
+    time_str = now_utc.strftime("%H:%M UTC")
+    date_header = f"📅 <b>DATE:</b> <code>{date_str}</code> | <code>{time_str}</code>"
+
     is_flash_update = mode in ["update", "auto_check"]
-    header_title = "⚡ APEX MACRO DESK — FLASH POST-NEWS MARKET UPDATE" if is_flash_update else f"🏛️ APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE"
+    
+    # ----------------------------------------------------
+    # A. DEDICATED TEMPLATE FOR END OF DAY (EOD) WRAP
+    # ----------------------------------------------------
+    if mode == "eod":
+        prompt = f"""
+You are the Chief Market Analyst at Apex Macro Desk. Synthesize a comprehensive **END OF DAY (EOD) MACRO SCOREBOARD & NEXT-DAY OUTLOOK**.
 
-    flash_context = f"\n⚠️ **FLASH UPDATE TRIGGERED BY:** {trigger_reason}\n" if is_flash_update and trigger_reason else ""
+WRITING & FORMATTING RULES:
+1. **NO SHORTCODES:** Write out FULL component names in clear, professional English.
+2. **HTML STYLING ONLY:** Use <b>BOLD</b> for headers/tickers, <i>italics</i> for macro context, and <code>code tags</code> for key prices/percentages. Do NOT use markdown asterisks (`*`) or unescaped `<` or `>` symbols.
+3. **DOUBLE SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections, individual asset breakdowns, and scoreboard entries for clean readability on mobile screens.
 
-    prompt = f"""
+SYSTEM INPUT DATA:
+- **ACTIVE REGIME:** {regime} ({regime_desc})
+- **CLOSING/LIVE INTRADAY PRICES (14 TARGET ASSETS):**
+{ohlc_prices}
+- **INTERMARKET INDICATORS:**
+{intermarket_data}
+
+REQUIRED TELEGRAM OUTPUT STRUCTURE:
+
+🌇 <b>APEX MACRO DESK — END OF DAY (EOD) WRAP & SCOREBOARD</b>
+{date_header}
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>1. 📊 DAILY MACRO RECAP & DAY IN REVIEW</b>
+
+• <b>Session Summary:</b> <i>Provide a 3-4 sentence high-level overview of how price moved across London and New York. Detail how bond yields, DXY, and risk sentiment closed the day.</i>
+
+• <b>Active Market Regime:</b> <i>{regime} — {regime_desc}</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>2. ⚖️ LONDON & NEW YORK SETUPS SCOREBOARD (VERDICT)</b>
+(Analyze today's price action against the session setups projected earlier. Evaluate 2-3 setups that were active today.)
+
+• <b>[TICKER] — [BUY / SELL]</b>
+  - <b>Outcome Verdict:</b> <code>[🎯 TARGET HIT / 🛑 STOP LOSS HIT / ⚠️ INVALIDATED / ⏳ IN PROGRESS]</code>
+  - <b>Executed Zone:</b> <code>[Price Level]</code> | <b>Peak Move:</b> <code>[Price / Pips]</code>
+  - <b>Post-Mortem Analysis:</b> <i>Explain in 2 sentences WHY the trade succeeded or failed based on intraday order flow or news releases during London/NY.</i>
+
+• <b>[TICKER] — [BUY / SELL]</b>
+  - <b>Outcome Verdict:</b> <code>[🎯 TARGET HIT / 🛑 STOP LOSS HIT / ⚠️ INVALIDATED / ⏳ IN PROGRESS]</code>
+  - <b>Executed Zone:</b> <code>[Price Level]</code> | <b>Peak Move:</b> <code>[Price / Pips]</code>
+  - <b>Post-Mortem Analysis:</b> <i>Explain in 2 sentences WHY the trade succeeded or failed.</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>3. 🔄 INTRADAY DEVELOPMENTS & NARRATIVE SHIFT</b>
+
+• <b>Key Catalyst Events:</b> <i>Detail 2 specific news events, economic data releases, or central bank comments from today's London/NY sessions and how the market reacted.</i>
+
+• <b>Impact on Next-Day Thesis:</b> <i>Explain in 2 plain English sentences whether today's developments INVALIDATED, REINFORCED, or SHIFTED our higher-timeframe bias for tomorrow.</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>4. 🧭 NEXT DAY BIAS & OVERNIGHT WATCHLIST</b>
+
+• <b>DXY & Dollar Direction:</b> 🟢 BULLISH / 🔴 BEARISH / ⚪ NEUTRAL
+  ↳ <i>1 sentence explaining tomorrow's USD bias.</i>
+
+• <b>Risk-On vs. Risk-Off Sentiment:</b> <i>1 sentence on expected equity & crypto momentum overnight into the Asian session.</i>
+
+• <b>Tomorrow's Key Pivot Levels:</b>
+  - <code>GOLD</code>: Watch <code>[Key Support/Resistance]</code>
+  - <code>EURUSD</code>: Watch <code>[Key Support/Resistance]</code>
+  - <code>SP500 / BTC</code>: Watch <code>[Key Support/Resistance]</code>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>5. 💡 INSTITUTIONAL EDGE — TRADING LESSON OF THE DAY</b>
+
+• <b>Daily Takeaway:</b> <i>Write an insightful 2-sentence lesson based on today's price action (e.g., liquidity sweeps before news, fakeouts at session opens, yield divergence, or managing risk during high-volatility releases).</i>
+"""
+
+    # ----------------------------------------------------
+    # B. STANDARD INTRADAY / SESSION TEMPLATE (LONDON, NY, UPDATE)
+    # ----------------------------------------------------
+    else:
+        header_title = "⚡ <b>APEX MACRO DESK — FLASH POST-NEWS MARKET UPDATE</b>" if is_flash_update else f"🏛️ <b>APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE</b>"
+        flash_context = f"\n⚠️ <b>FLASH UPDATE TRIGGERED BY:</b> {trigger_reason}\n" if is_flash_update and trigger_reason else ""
+
+        prompt = f"""
 You are the Chief Market Analyst at Apex Macro Desk. Create an easy-to-read, beginner-friendly **{mode.upper()} SESSION MARKET REPORT**.
 
 WRITING & FORMATTING RULES:
@@ -150,6 +235,7 @@ SYSTEM INPUT DATA:
 REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
 {header_title}
+{date_header}
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>1. 🌐 DECISION ENGINE & MACRO FRAMEWORK OVERVIEW</b>
@@ -184,7 +270,7 @@ Format every single asset with double line spacing like this:
 <b>3. 📈 INDICES & COMMODITIES</b>
 (Evaluate ONLY these 5 assets: GOLD, SILVER, SP500, NAS100, GER40)
 
-Format each asset with space:
+Format each asset with double line spacing:
 
 <b>GOLD</b> 🟢 BULLISH | Price: <code>2400.50</code>
 ↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining market drivers.</i>
@@ -194,7 +280,7 @@ Format each asset with space:
 <b>4. 🪙 CRYPTO ASSETS</b>
 (Evaluate ONLY these 2 assets: BTCUSDT, ETHUSDT)
 
-Format each asset with space:
+Format each asset with double line spacing:
 
 <b>BTCUSDT</b> ⚪ NEUTRAL | Price: <code>64200.00</code>
 ↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining market drivers.</i>
@@ -211,9 +297,9 @@ Format each asset with space:
 """
 
     model_candidates = [
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite"
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash"
     ]
     last_exception = None
 
@@ -240,7 +326,7 @@ def generate_banner(mode: str, regime: str) -> io.BytesIO:
     ax.axis('off')
 
     title = "APEX MACRO DESK"
-    subtitle = "FLASH POST-NEWS UPDATE" if mode in ["update", "auto_check"] else f"{mode.upper()} SESSION INTELLIGENCE"
+    subtitle = "EOD WRAP & SCOREBOARD" if mode == "eod" else ("FLASH POST-NEWS UPDATE" if mode in ["update", "auto_check"] else f"{mode.upper()} SESSION INTELLIGENCE")
     regime_badge = f"ACTIVE REGIME: {regime}"
     date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d | %H:%M UTC")
 
