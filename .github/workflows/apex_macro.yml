@@ -2,23 +2,32 @@ name: Apex Macro Desk Intelligence
 
 on:
   schedule:
-    - cron: '30 6 * * 1-5'   # London Session Open (06:30 UTC)
-    - cron: '30 12 * * 1-5'  # New York Session Open (12:30 UTC)
-    - cron: '0 21 * * 1-5'   # EOD Summary (21:00 UTC)
+    # 🇬🇧 London Session Open: 06:30 UTC
+    - cron: '30 6 * * 1-5'
+    
+    # 🇺🇸 New York Session Open: 12:30 UTC
+    - cron: '30 12 * * 1-5'
+    
+    # 🌆 End of Day (EOD) Summary: 21:00 UTC
+    - cron: '0 21 * * 1-5'
+
+    # ⚡ Automated Post-News Intraday Scanner: Hourly between 08:00 and 20:00 UTC
+    - cron: '0 8-20 * * 1-5'
 
   workflow_dispatch:
     inputs:
       mode:
         description: 'Session Mode to Run'
         required: true
-        default: 'all'
+        default: 'auto_check'
         type: choice
         options:
-          - all
+          - auto_check
+          - update
           - london
           - ny
           - eod
-          - update
+          - all
 
 jobs:
   run-macro-report:
@@ -46,13 +55,19 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          MINUTE=$(date -u +%M)
           HOUR=$(date -u +%H)
-          if [ "$HOUR" -eq "06" ] || [ "$HOUR" -eq "07" ]; then
+          
+          # Exact scheduled session opens
+          if [ "$HOUR" -eq "06" ] && [ "$MINUTE" -ge "25" ] && [ "$MINUTE" -le "35" ]; then
             python main.py --mode london
-          elif [ "$HOUR" -eq "12" ] || [ "$HOUR" -eq "13" ]; then
+          elif [ "$HOUR" -eq "12" ] && [ "$MINUTE" -ge "25" ] && [ "$MINUTE" -le "35" ]; then
             python main.py --mode ny
-          else
+          elif [ "$HOUR" -eq "21" ] && [ "$MINUTE" -le "10" ]; then
             python main.py --mode eod
+          else
+            # Hourly intraday volatility & post-news check
+            python main.py --mode auto_check
           fi
 
       - name: Run Apex Macro Engine (Manual Dispatch)
