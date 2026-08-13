@@ -74,7 +74,6 @@ CORE ANALYTICAL PRINCIPLES:
    • *Macro Catalyst:* <Context>
    • *DXY / Correlation Stance:* <Context>
    • *COT & Retail Sentiment:* <Context>
-   • *Technical Structure (MSS / CRT / FVG / OB / Liquidity):* <Details>
    • *Entry / Retest Zone:* <Price level based on live feed>
    • *Target Zone:* <Price level>
    • *Invalidation Level:* <Price level>
@@ -105,7 +104,7 @@ Prevailing macro narrative and adjustments from overnight Asian flows.
 
 ───────────────────────────
 🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-Provide AT LEAST 5 ranked setups matching the live price data feed.
+Provide AT LEAST 5 ranked setups matching the live price data feed using the exact setup format defined in system instructions.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES (HIGH IMPACT EVENTS TODAY)*
@@ -135,7 +134,7 @@ Compare London price action against the morning thesis. Explicitly state: What c
 
 ───────────────────────────
 🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-AT LEAST 5 ranked setups tailored for NY session volatility using live asset pricing.
+AT LEAST 5 ranked setups tailored for NY session volatility using live asset pricing and the exact setup format defined in system instructions.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES (HIGH IMPACT EVENTS TODAY)*
@@ -172,7 +171,7 @@ Post-news bias for ALL 14 assets: {', '.join(WATCHLIST)}.
 
 ───────────────────────────
 🎯 *TOP POST-NEWS HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-AT LEAST 5 updated setups targeting post-news retests using current live pricing.
+AT LEAST 5 updated setups targeting post-news retests using current live pricing and the exact setup format defined in system instructions.
 
 ───────────────────────────
 ⚠️ *POST-RELEASE LIQUIDITY WARNING*
