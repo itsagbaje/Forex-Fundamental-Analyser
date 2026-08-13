@@ -1,11 +1,26 @@
 import os
 import re
 import sys
+import io
 import time
 import logging
 import argparse
 import requests
-import yfinance as yf
+
+# Auto-install missing critical dependencies if running in a bare runner environment
+try:
+    import yfinance as yf
+except ImportError:
+    print("Missing 'yfinance' package. Installing automatically...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "yfinance", "python-dotenv", "matplotlib"])
+    import yfinance as yf
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -195,22 +210,11 @@ Key high-impact events for upcoming sessions and early directional context.
 # Live Data Fetcher Helper
 # ---------------------------------------------------------------------------
 def fetch_live_market_data() -> str:
-    """Fetches real-time price quotes for the watchlist using Yahoo Finance tickers."""
     ticker_mapping = {
-        "EURUSD": "EURUSD=X",
-        "GBPUSD": "GBPUSD=X",
-        "NZDUSD": "NZDUSD=X",
-        "AUDUSD": "AUDUSD=X",
-        "USDCHF": "USDCHF=X",
-        "USDCAD": "USDCAD=X",
-        "GOLD": "GC=F",
-        "SILVER": "SI=F",
-        "SP500": "^GSPC",
-        "NAS100": "^NDX",
-        "DXY": "DX-Y.NYB",
-        "BTCUSDT": "BTC-USD",
-        "ETHUSDT": "ETH-USD",
-        "GER40": "^GDAXI"
+        "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "NZDUSD": "NZDUSD=X",
+        "AUDUSD": "AUDUSD=X", "USDCHF": "USDCHF=X", "USDCAD": "USDCAD=X",
+        "GOLD": "GC=F", "SILVER": "SI=F", "SP500": "^GSPC", "NAS100": "^NDX",
+        "DXY": "DX-Y.NYB", "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "GER40": "^GDAXI"
     }
 
     price_lines = []
@@ -219,7 +223,6 @@ def fetch_live_market_data() -> str:
     for asset, symbol in ticker_mapping.items():
         try:
             t = yf.Ticker(symbol)
-            # Fetch recent fast info or history
             todays_data = t.history(period="1d")
             if not todays_data.empty:
                 current_price = todays_data['Close'].iloc[-1]
@@ -227,10 +230,41 @@ def fetch_live_market_data() -> str:
             else:
                 price_lines.append(f"- {asset}: Data unavailable")
         except Exception as e:
-            logging.warning(f"Could not fetch live price for {asset} ({symbol}): {e}")
+            logging.warning(f"Could not fetch live price for {asset}: {e}")
             price_lines.append(f"- {asset}: N/A")
 
     return "\n".join(price_lines)
+
+# ---------------------------------------------------------------------------
+# Banner Graphic Generator
+# ---------------------------------------------------------------------------
+def generate_session_banner(mode: str) -> io.BytesIO:
+    """Generates an institutional dark-mode visual banner displaying the session report title and timestamp."""
+    fig, ax = plt.subplots(figsize=(9, 3.5), dpi=150)
+    fig.patch.set_facecolor('#0d1117')
+    ax.set_facecolor('#161b22')
+
+    display_titles = {
+        "LONDON_OUTLOOK": "LONDON SESSION OUTLOOK",
+        "NEW_YORK_OUTLOOK": "NEW YORK SESSION OUTLOOK",
+        "POST_NEWS_UPDATE": "POST-NEWS FLASH ANALYSIS",
+        "EOD_RECAP": "END-OF-DAY MACRO RECAP"
+    }
+    subtitle = display_titles.get(mode, "MARKET INTELLIGENCE BRIEF")
+
+    ax.text(0.05, 0.70, "APEX INSTITUTIONAL MACRO DESK", fontsize=11, color='#8b949e', fontweight='bold', fontfamily='monospace')
+    ax.text(0.05, 0.40, subtitle, fontsize=22, color='#ffffff', fontweight='bold', fontfamily='sans-serif')
+    
+    timestamp_str = time.strftime("%A, %d %b %Y | %H:%M UTC", time.gmtime())
+    ax.text(0.05, 0.15, f"GENERATED: {timestamp_str}", fontsize=9, color='#58a6ff', fontweight='bold', fontfamily='monospace')
+
+    ax.axis('off')
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor(), edgecolor='none')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
 
 # ---------------------------------------------------------------------------
 # Helpers & Validation
@@ -246,41 +280,44 @@ def parse_arguments():
     cleaned = raw_mode.strip().upper()
 
     mapping = {
-        "LONDON": "LONDON_OUTLOOK",
-        "LONDON_OUTLOOK": "LONDON_OUTLOOK",
-        "NEW_YORK": "NEW_YORK_OUTLOOK",
-        "NEW_YORK_OUTLOOK": "NEW_YORK_OUTLOOK",
-        "NY": "NEW_YORK_OUTLOOK",
-        "POST_NEWS": "POST_NEWS_UPDATE",
-        "POST_NEWS_UPDATE": "POST_NEWS_UPDATE",
-        "EOD": "EOD_RECAP",
-        "EOD_RECAP": "EOD_RECAP"
+        "LONDON": "LONDON_OUTLOOK", "LONDON_OUTLOOK": "LONDON_OUTLOOK",
+        "NEW_YORK": "NEW_YORK_OUTLOOK", "NEW_YORK_OUTLOOK": "NEW_YORK_OUTLOOK", "NY": "NEW_YORK_OUTLOOK",
+        "POST_NEWS": "POST_NEWS_UPDATE", "POST_NEWS_UPDATE": "POST_NEWS_UPDATE",
+        "EOD": "EOD_RECAP", "EOD_RECAP": "EOD_RECAP"
     }
 
     return mapping.get(cleaned, "LONDON_OUTLOOK"), args.feed
 
 def validate_environment():
     missing = []
-    if not GEMINI_API_KEY:
-        missing.append("GEMINI_API_KEY")
-    if not TELEGRAM_BOT_TOKEN:
-        missing.append("TELEGRAM_BOT_TOKEN")
-    if not TELEGRAM_CHANNEL_ID:
-        missing.append("TELEGRAM_CHANNEL_ID")
+    if not GEMINI_API_KEY: missing.append("GEMINI_API_KEY")
+    if not TELEGRAM_BOT_TOKEN: missing.append("TELEGRAM_BOT_TOKEN")
+    if not TELEGRAM_CHANNEL_ID: missing.append("TELEGRAM_CHANNEL_ID")
 
     if missing:
         logging.error(f"Missing required environment variable(s): {', '.join(missing)}")
         sys.exit(1)
 
-def send_telegram_message(text: str) -> bool:
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    max_length = 4000
+def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
+    """Sends the generated session banner image first, followed by chunked HTML/Markdown text."""
+    photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    msg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
+    # 1. Send Visual Banner
+    try:
+        files = {'photo': ('banner.png', banner_buf.getvalue(), 'image/png')}
+        photo_res = requests.post(photo_url, data={'chat_id': TELEGRAM_CHANNEL_ID, 'caption': "📊 *Apex Institutional Intelligence Briefing*"}, files=files, timeout=15)
+        if photo_res.status_code != 200:
+            logging.warning(f"Banner upload alert ({photo_res.status_code}): {photo_res.text}")
+    except Exception as e:
+        logging.warning(f"Banner photo dispatch exception: {e}")
+
+    # 2. Send Chunked Text Report
+    max_length = 4000
     chunks = []
     while len(text) > max_length:
         split_idx = text.rfind("\n", 0, max_length)
-        if split_idx == -1:
-            split_idx = max_length
+        if split_idx == -1: split_idx = max_length
         chunks.append(text[:split_idx])
         text = text[split_idx:].lstrip()
     chunks.append(text)
@@ -293,43 +330,30 @@ def send_telegram_message(text: str) -> bool:
             "parse_mode": "Markdown",
             "disable_web_page_preview": True
         }
-        res = requests.post(url, json=payload)
+        res = requests.post(msg_url, json=payload)
         if res.status_code != 200:
-            logging.warning(f"Markdown posting failed ({res.status_code}). Fallback to raw text...")
             payload["parse_mode"] = ""
-            res_fallback = requests.post(url, json=payload)
+            res_fallback = requests.post(msg_url, json=payload)
             if res_fallback.status_code != 200:
                 logging.error(f"Telegram API error: {res_fallback.text}")
                 success = False
     return success
 
 def send_admin_alert(message: str):
-    if not TELEGRAM_ADMIN_CHAT_ID:
-        return
+    if not TELEGRAM_ADMIN_CHAT_ID: return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_ADMIN_CHAT_ID,
-        "text": f"⚠️ *SYSTEM ALERT*\n{message}",
-        "parse_mode": "Markdown"
-    }
-    try:
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        logging.error(f"Admin alert dispatch failed: {e}")
+    payload = {"chat_id": TELEGRAM_ADMIN_CHAT_ID, "text": f"⚠️ *SYSTEM ALERT*\n{message}", "parse_mode": "Markdown"}
+    try: requests.post(url, json=payload, timeout=5)
+    except Exception as e: logging.error(f"Admin alert dispatch failed: {e}")
 
 def count_setups(report_text: str) -> int:
     matches = re.findall(r"(?i)(?:setup|rank|opportunity)\s*#?\d+", report_text)
-    if matches:
-        return len(set(matches))
-    bullet_matches = re.findall(
-        r"\n\s*(?:\d+\.|\*|\-)\s+\*Setup.*?(?:BUY|SELL|LONG|SHORT)", report_text, re.IGNORECASE
-    )
+    if matches: return len(set(matches))
+    bullet_matches = re.findall(r"\n\s*(?:\d+\.|\*|\-)\s+\*Setup.*?(?:BUY|SELL|LONG|SHORT)", report_text, re.IGNORECASE)
     return len(bullet_matches)
 
 def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 5) -> str:
     prompt = PROMPT_TEMPLATES[mode]
-    
-    # Automatically fetch and inject live asset prices into the prompt context
     live_prices = fetch_live_market_data()
     prompt += f"\n\nLIVE MARKET PRICE FEED (MANDATORY REFERENCE FOR ALL PRICES):\n{live_prices}"
 
@@ -352,19 +376,16 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
                 )
             )
             report_text = (response.text or "").strip()
-            
         except Exception as e:
             logging.error(f"API Error during generate_content: {e}")
             if attempt < max_retries:
                 sleep_duration = 5 * (2 ** (attempt - 1))
-                logging.info(f"Temporary API failure (503/429). Retrying in {sleep_duration} seconds...")
+                logging.info(f"Temporary API failure. Retrying in {sleep_duration}s...")
                 time.sleep(sleep_duration)
                 continue
             else:
-                logging.error("Max API retries reached. Aborting pipeline.")
                 raise e
 
-        # Append mandatory disclaimer cleanly
         if not report_text.endswith(MANDATORY_DISCLAIMER.strip()):
             report_text += f"\n\n{MANDATORY_DISCLAIMER.strip()}"
 
@@ -377,7 +398,7 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
         if setup_count >= 5:
             return report_text
 
-        logging.warning(f"Setup count validation failed ({setup_count}/5 required). Retrying with reinforced prompt...")
+        logging.warning(f"Setup count validation failed ({setup_count}/5 required). Retrying...")
         prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 5 ranked, high-conviction trade setups clearly labeled (*Setup #1*, *Setup #2*, *Setup #3*, *Setup #4*, *Setup #5*) using the exact live prices provided."
 
     logging.warning("Max retries reached. Dispatching best output.")
@@ -397,12 +418,15 @@ def main():
 
     try:
         report = generate_report_with_retry(client=client, mode=mode, custom_feed=custom_feed)
-        logging.info("Report generation complete. Dispatching to Telegram...")
+        logging.info("Report generation complete. Generating visual session banner...")
+        
+        banner_buf = generate_session_banner(mode)
 
-        if send_telegram_message(report):
-            logging.info("Successfully published report to Telegram.")
+        logging.info("Dispatching visual banner and text report to Telegram...")
+        if send_telegram_media_and_message(report, banner_buf):
+            logging.info("Successfully published session intelligence package to Telegram.")
         else:
-            logging.error("Failed to post report to Telegram.")
+            logging.error("Failed to post report package to Telegram.")
             sys.exit(1)
 
     except Exception as e:
