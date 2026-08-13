@@ -2,279 +2,316 @@ import os
 import re
 import sys
 import logging
+import argparse
 import requests
-from enum import Enum
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-# Configure structured logging
+# ---------------------------------------------------------------------------
+# Setup Environment & Logging
+# ---------------------------------------------------------------------------
+load_dotenv()
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
-# Initialize Gemini Client (requires GEMINI_API_KEY environment variable)
-client = genai.Client()
-MODEL_NAME = "gemini-3.5-flash"
 
 WATCHLIST = [
     "EURUSD", "GBPUSD", "NZDUSD", "AUDUSD", "USDCHF", "USDCAD",
-    "GOLD", "SILVER", "SP500", "NAS100", "GER40", "BTCUSDT", "ETHUSDT"
+    "GOLD", "SILVER", "SP500", "NAS100", "DXY", "BTCUSDT", "ETHUSDT", "GER40"
 ]
 
-class ReportMode(Enum):
-    LONDON_OUTLOOK = "LONDON_OUTLOOK"
-    NEW_YORK_OUTLOOK = "NEW_YORK_OUTLOOK"
-    POST_NEWS_UPDATE = "POST_NEWS_UPDATE"
-    EOD_RECAP = "EOD_RECAP"
+PREFERRED_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+MANDATORY_DISCLAIMER = """
+---
+⚠️ **RISK DISCLAIMER & SUBSCRIBER NOTICE**
+The setups and directional biases provided above are analytical insights for educational purposes only. Do NOT blindly copy or execute these ideas. Successful trading requires independent trade confirmation, strict risk management, appropriate position sizing, and mandatory adherence to the defined invalidation levels.
+"""
 
-# System Prompts customized per trading phase
+# ---------------------------------------------------------------------------
+# Prompts & Core System Instructions
+# ---------------------------------------------------------------------------
+SYSTEM_INSTRUCTIONS = f"""
+You are a Lead Institutional Macro & Forex Fundamental Analyst.
+You analyze global financial markets across this complete watchlist:
+{', '.join(WATCHLIST)}.
+
+CORE ANALYTICAL PRINCIPLES:
+1. DXY DEDICATED ANALYSIS: Treat DXY as the central macroeconomic anchor, but NEVER treat it as a simple mechanical inverse indicator. Recognize currency-specific relative strength/weakness (e.g., EURUSD can drop during DXY weakness if European weakness outpaces US weakness). Explicitly explain these divergences.
+2. CONTINUITY & TRANSITION: Maintain a coherent intraday thesis. When market conditions shift or prior assumptions break, explicitly explain WHAT changed, WHY it changed, which previous assumptions were invalidated, and the NEW bias.
+3. WATCHLIST DIRECTIONAL BIAS: Every report must state an explicit directional bias (Bullish, Bearish, or Neutral/Ranging) for EVERY asset on the watchlist.
+4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): Generate at least 5 ranked setups for operational session outlooks and post-news reports. Each setup must integrate:
+   - Macro Fundamentals & Catalyst
+   - DXY Behavior & Correlation
+   - COT Positioning & Retail Sentiment context
+   - Relative Strength / Divergence
+   - Technical Structure: Market Structure Shift (MSS), Candle Range Theory (CRT), Fair Value Gap (FVG) / Order Block (OB)
+   - Specific Entry/Retest Zone, Target Zone, Invalidation Level, and Ideal Timing Window.
+"""
+
 PROMPT_TEMPLATES = {
-    ReportMode.LONDON_OUTLOOK: f"""
-You are a Senior Forex Strategist. Generate today's LONDON SESSION OUTLOOK formatted for Telegram.
+    "LONDON_OUTLOOK": f"""
+Generate the **LONDON SESSION FUNDAMENTAL OUTLOOK** for Telegram.
 Watchlist: {', '.join(WATCHLIST)}
 
 REQUIRED SECTIONS:
-1. ASIAN SESSION RECAP & LONDON CALENDAR:
-   - Asian session price range/liquidity sweeps and key London macroeconomic catalysts.
-   - Global Risk Sentiment [RISK-ON / RISK-OFF / MIXED].
-2. IN-DEPTH DXY MACRO ANALYSIS (ANCHOR):
-   - Fundamental drivers, Treasury yields, technical structure, and explicit DXY Bias [BULLISH / BEARISH / NEUTRAL].
-3. COMPLETE WATCHLIST DIRECTIONAL BIAS:
-   - Directional bias for all 13 watchlist assets.
-   - Append "[DECOUPLING NOTE: reason]" if an asset deviates from standard DXY inverse correlation.
-4. TOP HIGH-CONVICTION SETUPS (MINIMUM 5):
-   - AT LEAST 5 setups (Pair, Long/Short, Macro Driver, Entry Zone, Invalidation/Stop Loss, Target/Take Profit).
-5. RISK DISCLAIMER:
-   - Bold educational disclaimer requiring personal risk management.
+1. 💵 DEDICATED DXY MACRO ANALYSIS:
+   - Deep dive into DXY structure, Treasury yields, US interest rate expectations, and liquidity pools entering European hours.
+   - Clarify DXY directional bias and explain any non-mechanical asset interactions.
+
+2. 📊 COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX:
+   - Provide explicit Directional Bias (Bullish / Bearish / Neutral) and a 1-sentence macro driver for ALL 14 assets:
+     {', '.join(WATCHLIST)}.
+
+3. 🔄 INTRADAY CONTINUITY & THESIS CHECK:
+   - State the prevailing macro narrative. Note any overnight shifts or adjustments from prior sessions.
+
+4. 🎯 TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM):
+   - Provide AT LEAST 5 ranked, highly detailed trade setups incorporating:
+     * Rank & Pair (e.g., #1 EURUSD - Short)
+     * Confluence: Macro Fundamental Driver, DXY Context, COT & Retail Sentiment, Relative Strength
+     * Technical Confluence: MSS, CRT, FVG / OB
+     * Operational Levels: Entry/Retest Zone, Target Zone, Invalidation Level, and Session Timing Window.
+
+5. ⚠️ RISK WARNING & LIQUIDITY NOTES:
+   - Key European data releases, central bank speak, and spread volatility warnings.
 """,
 
-    ReportMode.NEW_YORK_OUTLOOK: f"""
-You are a Senior Forex Strategist. Generate today's NEW YORK SESSION OUTLOOK formatted for Telegram.
+    "NEW_YORK_OUTLOOK": f"""
+Generate the **NEW YORK SESSION FUNDAMENTAL OUTLOOK** for Telegram.
 Watchlist: {', '.join(WATCHLIST)}
 
 REQUIRED SECTIONS:
-1. LONDON SESSION MID-DAY RECAP & US CALENDAR:
-   - Key moves during London open, upcoming US high-impact economic releases (CPI, NFP, FOMC, etc.).
-   - Global Risk Sentiment shift heading into NY Overlap.
-2. DXY MACRO ANCHOR UPDATE:
-   - Mid-day DXY bias evaluation [BULLISH / BEARISH / NEUTRAL] reflecting US session yield activity.
-3. COMPLETE WATCHLIST DIRECTIONAL BIAS:
-   - Directional bias for all 13 watchlist assets.
-   - Append "[DECOUPLING NOTE: reason]" if an asset deviates from standard DXY inverse correlation.
-4. TOP HIGH-CONVICTION NY SETUPS (MINIMUM 5):
-   - AT LEAST 5 setups tailored for the NY session / London Overlap volatility.
-5. RISK DISCLAIMER:
-   - Educational notice regarding high volume during NY overlap.
+1. 💵 DEDICATED DXY MACRO ANALYSIS:
+   - In-depth US Dollar Index stance heading into the Wall Street open, bond yield momentum, and Fed expectations.
+   - Address relative strength dynamics vs majors, indices, and metals.
+
+2. 📊 COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX:
+   - Provide explicit Directional Bias (Bullish / Bearish / Neutral) for ALL 14 assets:
+     {', '.join(WATCHLIST)}.
+
+3. 🔄 INTRADAY CONTINUITY & THESIS TRANSITION:
+   - Compare London price action against the original morning thesis. Explicitly state: What changed during London, why it changed, and how it impacts New York flows.
+
+4. 🎯 TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM):
+   - Provide AT LEAST 5 ranked setups tailored for NY session volatility, incorporating Macro, DXY context, COT/Retail sentiment, MSS, FVG/OB, CRT, Entry, Target, Invalidation, and Timing.
+
+5. ⚠️ RISK WARNING & SPREAD ADVISORY:
+   - Upcoming US economic releases (CPI, NFP, PPI, Claims) and volatility alerts.
 """,
 
-    ReportMode.POST_NEWS_UPDATE: f"""
-You are a Senior Forex Strategist. Generate a POST-NEWS ANALYSIS & REACTION REPORT formatted for Telegram.
+    "POST_NEWS_UPDATE": f"""
+Generate a **POST-NEWS ANALYSIS & REACTION REPORT** for Telegram.
 Watchlist: {', '.join(WATCHLIST)}
 
 REQUIRED SECTIONS:
-1. EVENT BREAKDOWN & DATA OUTCOME:
-   - Release details (e.g., CPI, NFP, Rate Decision) showing Actual vs. Forecast / Consensus.
-2. IMMEDIATE DXY & YIELD REACTION:
-   - Volatility spike, market structure shift, and updated DXY bias.
-3. WATCHLIST BIAS UPDATES & DECOUPLING ADJUSTMENTS:
-   - Detail which assets held structure vs. which invalidated levels.
-   - Append "[DECOUPLING NOTE: reason]" for unexpected divergence.
-4. TOP POST-NEWS HIGH-CONVICTION SETUPS (MINIMUM 5):
-   - AT LEAST 5 setups targeting post-spike retests, fair value gaps, or continuation entries.
-5. RISK WARNING:
-   - Warning regarding post-release spread expansion and slippage.
+1. 📰 EVENT BREAKDOWN & ACTUAL VS FORECAST:
+   - Release details (e.g. CPI, NFP, Rate Decisions). Detailed data outcome vs consensus.
+
+2. 💵 DEDICATED DXY REACTION & YIELD IMPACT:
+   - In-depth breakdown of immediate DXY structural shift, bond yield reaction, and repricing of central bank rate paths.
+
+3. 🔄 BIAS REASSESSMENT & INVALIDATION LOG (WHAT CHANGED & WHY):
+   - Reassess previous session analysis. Explicitly answer:
+     * What changed in the macro picture?
+     * Which prior biases/assumptions are NO LONGER VALID?
+     * Which existing setups were invalidated by this event?
+     * What is the updated directional bias across the watchlist?
+
+4. 📊 UPDATED WATCHLIST DIRECTIONAL BIAS MATRIX:
+   - Post-news bias for ALL 14 assets: {', '.join(WATCHLIST)}.
+
+5. 🎯 TOP POST-NEWS HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM):
+   - AT LEAST 5 updated setups targeting post-news retests, FVG fills, or liquidity sweeps. Must include Macro Driver, DXY stance, MSS, Entry, Target, Invalidation, and Timing.
+
+6. ⚠️ POST-RELEASE LIQUIDITY & SLIPPAGE WARNING.
 """,
 
-    ReportMode.EOD_RECAP: f"""
-You are a Senior Forex Strategist. Generate an END-OF-DAY (EOD) SESSION RECAP formatted for Telegram.
+    "EOD_RECAP": f"""
+Generate the **END OF DAY MACRO & FUNDAMENTAL RECAP** for Telegram.
 Watchlist: {', '.join(WATCHLIST)}
 
 REQUIRED SECTIONS:
-1. DAILY SESSION SUMMARY:
-   - Main market themes, DXY daily close structure, and overarching macro drivers.
-2. HIGH-CONVICTION SETUPS PERFORMANCE REVIEW:
-   - Transparent review of today's setups (Targets hit, stops hit, or trades still active).
-3. KEY LEVELS TESTED & HELD:
-   - Liquidity sweeps, daily highs/lows, and notable S/R holds across the watchlist.
-4. OVERNIGHT & ASIAN SESSION PREVIEW:
-   - Key catalysts for the upcoming Asian/London handoff.
-5. DISCLAIMER: Standard risk management disclaimer.
+1. 💵 DEDICATED DXY & CROSS-ASSET RECAP:
+   - In-depth review of DXY performance across Asian, London, and NY sessions alongside Treasury yield behavior.
+
+2. 📊 DAILY WATCHLIST CLOSING BIAS & RELATIVE STRENGTH MATRIX:
+   - Review of performance and closing market structure for ALL 14 assets: {', '.join(WATCHLIST)}.
+
+3. 🔄 DAILY THESIS REVIEW & DECOUPLING SUMMARY:
+   - Summary of key market drivers, unexpected decoupling events, and structural trend shifts observed today.
+
+4. 📅 TOMORROW'S CALENDAR & PRELIMINARY OUTLOOK:
+   - Key high-impact events for upcoming sessions and early directional context.
 """
 }
 
+# ---------------------------------------------------------------------------
+# Helpers & Validation
+# ---------------------------------------------------------------------------
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Forex Fundamental Analyser")
+    parser.add_argument("positional_mode", nargs="?", default=None)
+    parser.add_argument("--mode", type=str, default=None)
+    parser.add_argument("--feed", type=str, default=None)
+    args, _ = parser.parse_known_args()
 
-def generate_report(news_feed: str, mode: ReportMode) -> str:
-    """Queries Gemini API using the prompt template matching the current session mode."""
-    system_instruction = PROMPT_TEMPLATES[mode]
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(f"Session Market Feeds & Technical Data:\n{news_feed}")]
-            )
-        ],
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.2,
-        )
-    )
-    return response.text
+    raw_mode = args.mode or args.positional_mode or "LONDON_OUTLOOK"
+    cleaned = raw_mode.strip().upper()
 
+    mapping = {
+        "LONDON": "LONDON_OUTLOOK",
+        "LONDON_OUTLOOK": "LONDON_OUTLOOK",
+        "NEW_YORK": "NEW_YORK_OUTLOOK",
+        "NEW_YORK_OUTLOOK": "NEW_YORK_OUTLOOK",
+        "NY": "NEW_YORK_OUTLOOK",
+        "POST_NEWS": "POST_NEWS_UPDATE",
+        "POST_NEWS_UPDATE": "POST_NEWS_UPDATE",
+        "EOD": "EOD_RECAP",
+        "EOD_RECAP": "EOD_RECAP"
+    }
 
-def process_report_content(raw_report: str) -> tuple[str, bool, int]:
-    """
-    Parses output to:
-    1. Reformat [DECOUPLING NOTE: ...] tags into highlighted Telegram text.
-    2. Count high-conviction setups to ensure minimum threshold of 5 is met.
-    """
-    formatted_report = re.sub(
-        r"\[DECOUPLING NOTE:\s*(.*?)\]",
-        r"\n  ⚡ *[DECOUPLING NOTE]:* _\1_",
-        raw_report,
-        flags=re.IGNORECASE
-    )
+    return mapping.get(cleaned, "LONDON_OUTLOOK"), args.feed
 
-    setup_matches = re.findall(r"(?:^|\n)(?:\d+[\️⃣\.]|\d+\)\s*)", formatted_report)
-    setup_count = len(setup_matches)
-    is_valid = setup_count >= 5
+def validate_environment():
+    missing = []
+    if not GEMINI_API_KEY:
+        missing.append("GEMINI_API_KEY")
+    if not TELEGRAM_BOT_TOKEN:
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if not TELEGRAM_CHANNEL_ID:
+        missing.append("TELEGRAM_CHANNEL_ID")
 
-    return formatted_report, is_valid, setup_count
+    if missing:
+        logging.error(f"Missing required environment variable(s): {', '.join(missing)}")
+        sys.exit(1)
 
+def send_telegram_message(text: str) -> bool:
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    max_length = 4000
 
-def generate_report_with_retry(news_feed: str, mode: ReportMode, max_retries: int = 3) -> tuple[str, bool, int]:
-    """Retries generation automatically if fewer than 5 setups are produced."""
-    current_feed = news_feed
+    chunks = []
+    while len(text) > max_length:
+        split_idx = text.rfind("\n", 0, max_length)
+        if split_idx == -1:
+            split_idx = max_length
+        chunks.append(text[:split_idx])
+        text = text[split_idx:].lstrip()
+    chunks.append(text)
 
-    for attempt in range(1, max_retries + 1):
-        logging.info(f"[{mode.value}] Attempt {attempt}/{max_retries}: Requesting generation from Gemini...")
-        
-        raw_output = generate_report(current_feed, mode)
-        formatted_text, meets_min_setups, total_setups = process_report_content(raw_output)
-
-        # EOD Recap evaluates setup outcomes so setup threshold validation is skipped
-        if meets_min_setups or mode == ReportMode.EOD_RECAP:
-            logging.info(f"[{mode.value}] Success! Generated {total_setups} setups/entries.")
-            return formatted_text, True, total_setups
-        
-        logging.warning(f"[{mode.value}] Attempt {attempt} generated only {total_setups}/5 setups.")
-
-        if attempt < max_retries:
-            current_feed += (
-                f"\n\n[SYSTEM DIRECTIVE - RETRY {attempt + 1}]: "
-                f"Your previous attempt produced only {total_setups} setups. "
-                f"You MUST generate AT LEAST 5 high-conviction setups."
-            )
-
-    logging.error(f"[{mode.value}] Exceeded max retries. Using latest output ({total_setups} setups).")
-    return formatted_text, False, total_setups
-
-
-def send_telegram_chunked(bot_token: str, chat_id: str, text: str):
-    """Safely splits long messages along line breaks to respect Telegram's 4,096 char limit."""
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    MAX_CHUNK_SIZE = 4000
-
-    if len(text) <= MAX_CHUNK_SIZE:
-        chunks = [text]
-    else:
-        chunks = []
-        current_chunk = ""
-        for line in text.splitlines(keepends=True):
-            if len(current_chunk) + len(line) > MAX_CHUNK_SIZE:
-                chunks.append(current_chunk)
-                current_chunk = line
-            else:
-                current_chunk += line
-        if current_chunk:
-            chunks.append(current_chunk)
-
-    for idx, chunk in enumerate(chunks, 1):
+    success = True
+    for chunk in chunks:
         payload = {
-            "chat_id": chat_id,
+            "chat_id": TELEGRAM_CHANNEL_ID,
             "text": chunk,
             "parse_mode": "Markdown",
             "disable_web_page_preview": True
         }
         res = requests.post(url, json=payload)
-        res.raise_for_status()
-        logging.info(f"Delivered chunk {idx}/{len(chunks)} to Telegram chat {chat_id}")
+        if res.status_code != 200:
+            logging.warning(f"Markdown posting failed ({res.status_code}). Fallback to raw text...")
+            payload["parse_mode"] = ""
+            res_fallback = requests.post(url, json=payload)
+            if res_fallback.status_code != 200:
+                logging.error(f"Telegram API error: {res_fallback.text}")
+                success = False
+    return success
 
-
-def send_admin_alert(bot_token: str, admin_chat_id: str, message: str):
-    """Sends failure diagnostics to the admin chat."""
-    if not bot_token or not admin_chat_id:
+def send_admin_alert(message: str):
+    if not TELEGRAM_ADMIN_CHAT_ID:
         return
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
-        "chat_id": admin_chat_id,
-        "text": f"🚨 *PIPELINE ALERT* 🚨\n\n{message}",
+        "chat_id": TELEGRAM_ADMIN_CHAT_ID,
+        "text": f"⚠️ **SYSTEM ALERT**\n{message}",
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        logging.error(f"Failed to send admin alert: {e}")
+        logging.error(f"Admin alert dispatch failed: {e}")
 
-
-def main():
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHANNEL_ID")
-    admin_chat_id = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
-
-    if not bot_token or not chat_id:
-        logging.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID environment variables.")
-        sys.exit(1)
-
-    # SELECT SESSION MODE:
-    # Option 1: ReportMode.LONDON_OUTLOOK
-    # Option 2: ReportMode.NEW_YORK_OUTLOOK
-    # Option 3: ReportMode.POST_NEWS_UPDATE
-    # Option 4: ReportMode.EOD_RECAP
-    
-    # Example reading mode from command-line arg (e.g. `python main.py LONDON_OUTLOOK`) or fallback
-    mode_str = sys.argv[1] if len(sys.argv) > 1 else "LONDON_OUTLOOK"
-    try:
-        active_mode = ReportMode[mode_str]
-    except KeyError:
-        logging.warning(f"Invalid mode '{mode_str}'. Defaulting to LONDON_OUTLOOK.")
-        active_mode = ReportMode.LONDON_OUTLOOK
-
-    # Sample input feed (Replace with your dynamic scraper feed)
-    sample_feed = """
-    SESSION DATA INPUT:
-    - DXY holding 103.80 after mild Asian consolidation.
-    - UK Manufacturing PMI beat expectations at 51.2 vs 49.8 forecast.
-    - Crude Oil bouncing off $72.50 support.
-    - US 10Y Yields steady at 4.14%.
-    - Gold retesting $2,030 demand zone following Asian liquidity sweep.
-    """
-
-    logging.info(f"Running pipeline for mode: {active_mode.value}")
-
-    report_text, validation_passed, setup_count = generate_report_with_retry(
-        news_feed=sample_feed,
-        mode=active_mode,
-        max_retries=3
+def count_setups(report_text: str) -> int:
+    matches = re.findall(r"(?i)(?:setup|rank|opportunity)\s*#?\d+", report_text)
+    if matches:
+        return len(set(matches))
+    bullet_matches = re.findall(
+        r"\n\s*(?:\d+\.|\*|\-)\s+\*\*.*?(?:BUY|SELL|LONG|SHORT)", report_text, re.IGNORECASE
     )
+    return len(bullet_matches)
 
-    if not validation_passed and active_mode != ReportMode.EOD_RECAP:
-        send_admin_alert(
-            bot_token, 
-            admin_chat_id, 
-            f"Mode {active_mode.value} produced only {setup_count}/5 setups after 3 retries."
+def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 3) -> str:
+    prompt = PROMPT_TEMPLATES[mode]
+    if custom_feed:
+        prompt += f"\n\nLIVE MARKET DATA / BREAKING EVENT FEED:\n{custom_feed}"
+
+    for attempt in range(1, max_retries + 1):
+        logging.info(f"Calling Gemini ({PREFERRED_MODEL}) for mode '{mode}' (Attempt {attempt}/{max_retries})...")
+
+        response = client.models.generate_content(
+            model=PREFERRED_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTIONS,
+                temperature=0.3,
+            )
         )
 
-    try:
-        send_telegram_chunked(bot_token, chat_id, report_text)
-        logging.info(f"Successfully published {active_mode.value} report to Telegram.")
-    except Exception as e:
-        logging.error(f"Telegram delivery failed: {e}")
-        send_admin_alert(bot_token, admin_chat_id, f"Execution error in {active_mode.value}: {e}")
+        report_text = (response.text or "").strip()
 
+        # Append mandatory disclaimer
+        if not report_text.endswith(MANDATORY_DISCLAIMER.strip()):
+            report_text += f"\n\n{MANDATORY_DISCLAIMER.strip()}"
+
+        if mode == "EOD_RECAP":
+            return report_text
+
+        setup_count = count_setups(report_text)
+        logging.info(f"Detected {setup_count} trade setup(s) in output.")
+
+        if setup_count >= 5:
+            return report_text
+
+        logging.warning(f"Setup count validation failed ({setup_count}/5 required). Retrying with reinforced prompt...")
+        prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 5 ranked, high-conviction trade setups clearly labeled (#1, #2, #3, #4, #5)."
+
+    logging.warning("Max retries reached. Dispatching best output.")
+    send_admin_alert(f"Mode `{mode}` generated only {setup_count}/5 setups after {max_retries} attempts.")
+    return report_text
+
+# ---------------------------------------------------------------------------
+# Main Execution
+# ---------------------------------------------------------------------------
+def main():
+    validate_environment()
+    mode, custom_feed = parse_arguments()
+
+    logging.info(f"Starting pipeline | Mode: {mode} | Model: {PREFERRED_MODEL}")
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
+    try:
+        report = generate_report_with_retry(client=client, mode=mode, custom_feed=custom_feed)
+        logging.info("Report generation complete. Dispatching to Telegram...")
+
+        if send_telegram_message(report):
+            logging.info("Successfully published report to Telegram.")
+        else:
+            logging.error("Failed to post report to Telegram.")
+            sys.exit(1)
+
+    except Exception as e:
+        error_msg = f"Pipeline execution failed for mode `{mode}`:\n`{str(e)}`"
+        logging.error(error_msg, exc_info=True)
+        send_admin_alert(error_msg)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
