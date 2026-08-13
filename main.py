@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import time
 import logging
 import argparse
 import requests
@@ -247,24 +248,40 @@ def count_setups(report_text: str) -> int:
     )
     return len(bullet_matches)
 
-def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 3) -> str:
+def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 5) -> str:
     prompt = PROMPT_TEMPLATES[mode]
     if custom_feed:
         prompt += f"\n\nLIVE MARKET DATA / BREAKING EVENT FEED:\n{custom_feed}"
 
+    report_text = ""
+    setup_count = 0
+
     for attempt in range(1, max_retries + 1):
         logging.info(f"Calling Gemini ({PREFERRED_MODEL}) for mode '{mode}' (Attempt {attempt}/{max_retries})...")
 
-        response = client.models.generate_content(
-            model=PREFERRED_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTIONS,
-                temperature=0.3,
+        try:
+            # Wrapped in try/except to prevent 503 Server Errors from crashing the script
+            response = client.models.generate_content(
+                model=PREFERRED_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTIONS,
+                    temperature=0.3,
+                )
             )
-        )
-
-        report_text = (response.text or "").strip()
+            report_text = (response.text or "").strip()
+            
+        except Exception as e:
+            logging.error(f"API Error during generate_content: {e}")
+            if attempt < max_retries:
+                # Exponential backoff (5s, 10s, 20s, 40s) for transient errors like 503/429
+                sleep_duration = 5 * (2 ** (attempt - 1))
+                logging.info(f"Temporary API failure (e.g. 503 High Demand). Retrying in {sleep_duration} seconds...")
+                time.sleep(sleep_duration)
+                continue
+            else:
+                logging.error("Max API retries reached. Aborting pipeline.")
+                raise e
 
         # Append mandatory disclaimer
         if not report_text.endswith(MANDATORY_DISCLAIMER.strip()):
@@ -315,3 +332,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
