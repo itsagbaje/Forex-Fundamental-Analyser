@@ -3,11 +3,18 @@ import sys
 import argparse
 import io
 import re
+import json
 import requests
 import datetime
+from zoneinfo import ZoneInfo
 import yfinance as yf
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from google import genai
+
+# Dynamic Timezone (Handles GMT / BST / WAT daylight saving shifts automatically)
+LOCAL_TZ = ZoneInfo("Europe/London")
+STATE_FILE = "setups_today.json"
 
 # ==========================================
 # 1. WATCHLIST (EXACT 14 TARGET ASSETS)
@@ -40,7 +47,79 @@ INTERMARKET_TICKERS = {
 }
 
 # ==========================================
-# 2. DECISION ENGINE & REGIME CLASSIFIER
+# 2. STATE PERSISTENCE ENGINE
+# ==========================================
+def load_daily_state():
+    """Loads recorded trade setups from earlier sessions on the same date."""
+    if not os.path.exists(STATE_FILE):
+        return {}
+    
+    try:
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+            
+        today_str = datetime.datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+        if data.get("date") == today_str:
+            return data.get("sessions", {})
+        else:
+            print("🧹 State file is from a previous date. Resetting daily state...")
+            return {}
+    except Exception as e:
+        print(f"⚠️ Error reading state file: {e}")
+        return {}
+
+def save_daily_state(session_mode: str, report_text: str):
+    """Saves session output to disk so EOD wrap can evaluate predictions."""
+    if session_mode not in ["london", "ny"]:
+        return
+
+    today_str = datetime.datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+    current_state = load_daily_state()
+    
+    # Extract trade setups section from report text
+    setups_match = re.search(r"5\. 🎯 HIGH CONVICTION SETUPS.*", report_text, re.DOTALL)
+    extracted_setups = setups_match.group(0) if setups_match else report_text[-1000:]
+
+    current_state[session_mode] = {
+        "timestamp": datetime.datetime.now(LOCAL_TZ).strftime("%H:%M %Z"),
+        "setups": extracted_setups
+    }
+
+    payload = {
+        "date": today_str,
+        "sessions": current_state
+    }
+
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(payload, f, indent=2)
+        print(f"💾 Successfully persisted [{session_mode.upper()}] session state to {STATE_FILE}")
+    except Exception as e:
+        print(f"⚠️ Failed to save state file: {e}")
+
+# ==========================================
+# 3. ECONOMIC CALENDAR FETCH ENGINE
+# ==========================================
+def fetch_economic_calendar():
+    """Fetches high-impact economic events scheduled for today."""
+    try:
+        url = "https://nfp.ourfxbook.com/calendar.json" # Public high-impact calendar feed
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            events = res.json()
+            today_str = datetime.datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+            high_impact = [
+                f"• {e.get('time', 'TBD')} | {e.get('country', '')} | {e.get('title', '')} (Impact: HIGH)"
+                for e in events if e.get('date', '').startswith(today_str) and e.get('impact') == 'High'
+            ]
+            if high_impact:
+                return "\n".join(high_impact[:5])
+    except Exception:
+        pass
+    return "• Standard Scheduled Macro Releases / Speech Calendar Active."
+
+# ==========================================
+# 4. MARKET DATA INGESTION & FALLBACKS
 # ==========================================
 def classify_market_regime():
     try:
@@ -75,33 +154,47 @@ def fetch_market_data():
     all_tickers = list(WATCHLIST_TICKERS.values())
     
     try:
-        # Pull 5 days of 15-minute bars to capture live intraday price action
         data = yf.download(tickers=all_tickers, period="5d", interval="15m", progress=False)['Close']
         
         for name, ticker in WATCHLIST_TICKERS.items():
-            if ticker in data and not data[ticker].dropna().empty:
-                clean_series = data[ticker].dropna()
+            try:
+                if ticker in data and not data[ticker].dropna().empty:
+                    clean_series = data[ticker].dropna()
+                else:
+                    # Single Ticker Fallback
+                    clean_series = yf.Ticker(ticker).history(period="5d", interval="15m")['Close'].dropna()
+
                 latest_price = clean_series.iloc[-1]
                 
-                # Price from 24 hours ago (96 fifteen-minute bars)
-                prev_price = clean_series.iloc[-96] if len(clean_series) >= 96 else clean_series.iloc[0]
-                change_pct = ((latest_price - prev_price) / prev_price) * 100
+                # Multi-Timeframe Lookbacks
+                p_15m_ago = clean_series.iloc[-2] if len(clean_series) >= 2 else latest_price
+                p_30m_ago = clean_series.iloc[-3] if len(clean_series) >= 3 else latest_price
+                p_1h_ago  = clean_series.iloc[-5] if len(clean_series) >= 5 else latest_price
+                p_24h_ago = clean_series.iloc[-96] if len(clean_series) >= 96 else clean_series.iloc[0]
                 
-                # Detect intraday momentum (last 4 bars / 1 hour shift)
-                one_hour_ago = clean_series.iloc[-4] if len(clean_series) >= 4 else latest_price
-                hourly_pct = ((latest_price - one_hour_ago) / one_hour_ago) * 100
+                pct_15m = ((latest_price - p_15m_ago) / p_15m_ago) * 100 if p_15m_ago != 0 else 0.0
+                pct_30m = ((latest_price - p_30m_ago) / p_30m_ago) * 100 if p_30m_ago != 0 else 0.0
+                pct_1h  = ((latest_price - p_1h_ago)  / p_1h_ago)  * 100 if p_1h_ago != 0 else 0.0
+                pct_24h = ((latest_price - p_24h_ago) / p_24h_ago) * 100 if p_24h_ago != 0 else 0.0
                 
-                if abs(hourly_pct) >= 0.40:
-                    direction = "RALLYING" if hourly_pct > 0 else "PLUMMETING"
-                    momentum_triggers.append(f"{name} ({hourly_pct:+.2f}% in 1h — {direction})")
+                # Dynamic Volatility Triggers
+                if abs(pct_15m) >= 0.25:
+                    dir_str = "SPIKING" if pct_15m > 0 else "DROPPING"
+                    momentum_triggers.append(f"{name} ({pct_15m:+.2f}% in 15m — {dir_str})")
+                elif abs(pct_30m) >= 0.35:
+                    dir_str = "RALLYING" if pct_30m > 0 else "SLIDING"
+                    momentum_triggers.append(f"{name} ({pct_30m:+.2f}% in 30m — {dir_str})")
+                elif abs(pct_1h) >= 0.45:
+                    dir_str = "SURGING" if pct_1h > 0 else "PLUMMETING"
+                    momentum_triggers.append(f"{name} ({pct_1h:+.2f}% in 1h — {dir_str})")
 
-                momentum_tag = "🚀 PUMPING" if hourly_pct > 0.3 else ("🔻 DUMPING" if hourly_pct < -0.3 else "⚖️ STABLE")
+                momentum_tag = "🔥 HIGH VOLATILITY" if (abs(pct_15m) >= 0.20 or abs(pct_30m) >= 0.30) else ("🚀 PUMPING" if pct_1h > 0.3 else ("🔻 DUMPING" if pct_1h < -0.3 else "⚖️ STABLE"))
                 
                 price_lines.append(
-                    f"• {name}: Price = {latest_price:.4f} (24h: {change_pct:+.2f}% | 1h Momentum: {hourly_pct:+.2f}% [{momentum_tag}])"
+                    f"• {name}: Price = {latest_price:.4f} | 15m: {pct_15m:+.2f}% | 30m: {pct_30m:+.2f}% | 1h: {pct_1h:+.2f}% | 24h: {pct_24h:+.2f}% [{momentum_tag}]"
                 )
-            else:
-                price_lines.append(f"• {name}: Price updating...")
+            except Exception as item_err:
+                price_lines.append(f"• {name}: Price data updating ({str(item_err)})...")
     except Exception as e:
         price_lines.append(f"Price fetch issue: {str(e)}")
         
@@ -120,59 +213,174 @@ def fetch_intermarket_data():
     return " | ".join(lines) if lines else "Key indicators updating..."
 
 # ==========================================
-# 3. AI MACRO ENGINE & PROMPT SYNTHESIS
+# 5. TECHNICAL CHART & BANNER GENERATOR
 # ==========================================
-def generate_report(mode: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, api_key: str, trigger_reason: str = "") -> str:
+def generate_banner(mode: str, regime: str) -> io.BytesIO:
+    """Generates a technical intraday chart banner using Gold (GC=F) price action."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 4.2), gridspec_kw={'height_ratios': [2.2, 1]}, facecolor='#0D1117')
+    
+    # ------------------ TOP PANEL: INTRADAY CHART ------------------
+    ax1.set_facecolor('#161B22')
+    try:
+        chart_df = yf.Ticker("GC=F").history(period="1d", interval="15m")
+        if not chart_df.empty:
+            ax1.plot(chart_df.index, chart_df['Close'], color='#58A6FF', linewidth=1.8, label="GOLD Intraday (15m)")
+            ax1.fill_between(chart_df.index, chart_df['Close'], chart_df['Close'].min(), color='#58A6FF', alpha=0.08)
+            ax1.set_title("XAUUSD / GOLD — INTRADAY PRICE ACTION", color='#8B949E', fontsize=9, loc='left', pad=6)
+            ax1.grid(True, color='#21262D', linestyle='--', linewidth=0.5)
+            ax1.tick_params(colors='#8B949E', labelsize=7)
+            ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=LOCAL_TZ))
+        else:
+            ax1.text(0.5, 0.5, "Live Technical Chart Active", color='#8B949E', ha='center', va='center')
+    except Exception:
+        ax1.text(0.5, 0.5, "Live Technical Chart Active", color='#8B949E', ha='center', va='center')
+        
+    # ------------------ BOTTOM PANEL: INSTITUTIONAL BADGE ------------------
+    ax2.set_facecolor('#0D1117')
+    ax2.axis('off')
+
+    title = "APEX MACRO DESK"
+    subtitle = "EOD WRAP & SCOREBOARD" if mode == "eod" else ("FLASH POST-NEWS UPDATE" if mode in ["update", "auto_check"] else f"{mode.upper()} SESSION INTELLIGENCE")
+    regime_badge = f"ACTIVE REGIME: {regime}"
+    
+    now_local = datetime.datetime.now(LOCAL_TZ)
+    tz_name = now_local.strftime("%Z")
+    date_str = f"{now_local.strftime('%Y-%m-%d | %H:%M')} {tz_name}"
+
+    ax2.text(0.5, 0.75, title, color='#58A6FF', fontsize=18, fontweight='bold', ha='center', va='center')
+    ax2.text(0.5, 0.50, subtitle, color='#FF7B72' if mode in ["update", "auto_check"] else '#FFFFFF', fontsize=11, fontweight='bold', ha='center', va='center')
+    ax2.text(0.5, 0.28, regime_badge, color='#3FB950', fontsize=9, fontweight='bold', ha='center', va='center')
+    ax2.text(0.5, 0.10, date_str, color='#8B949E', fontsize=8, ha='center', va='center')
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=150, facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+# ==========================================
+# 6. AI MACRO ENGINE (GEMINI 3.5 FLASH)
+# ==========================================
+def generate_report(mode: str, intermarket_data: str, ohlc_prices: str, regime: str, regime_desc: str, calendar_events: str, past_state: dict, api_key: str, trigger_reason: str = "") -> str:
     client = genai.Client(api_key=api_key)
 
-    # Dynamic date/time block to prevent channel report confusion
-    now_utc = datetime.datetime.utcnow()
-    date_str = now_utc.strftime("%A, %d %b %Y").upper()
-    time_str = now_utc.strftime("%H:%M UTC")
+    now_local = datetime.datetime.now(LOCAL_TZ)
+    date_str = now_local.strftime("%A, %d %b %Y").upper()
+    tz_name = now_local.strftime("%Z")
+    time_str = f"{now_local.strftime('%H:%M')} {tz_name}"
     date_header = f"📅 <b>DATE:</b> <code>{date_str}</code> | <code>{time_str}</code>"
 
     is_flash_update = mode in ["update", "auto_check"]
     
+    # Format persisted setups context for EOD wrap
+    history_context = ""
+    if mode == "eod" and past_state:
+        history_context = "\n<b>PREVIOUS SESSION SETUPS RECORDED TODAY:</b>\n"
+        for s_name, s_data in past_state.items():
+            history_context += f"\n--- {s_name.upper()} SESSION ({s_data.get('timestamp')}) ---\n{s_data.get('setups')}\n"
+    elif mode == "eod":
+        history_context = "\n(No earlier session setups recorded today in local state.)\n"
+
     # ----------------------------------------------------
-    # A. DEDICATED TEMPLATE FOR END OF DAY (EOD) WRAP
+    # A. FLASH POST-NEWS UPDATE TEMPLATE
     # ----------------------------------------------------
-    if mode == "eod":
+    if is_flash_update:
+        flash_context = f"\n⚠️ <b>FLASH TRIGGER DETECTED:</b> {trigger_reason}\n" if trigger_reason else ""
+        
         prompt = f"""
-You are the Chief Market Analyst at Apex Macro Desk. Synthesize a comprehensive **END OF DAY (EOD) MACRO SCOREBOARD & NEXT-DAY OUTLOOK**.
+You are the Chief Market Analyst at Apex Macro Desk. Synthesize a **FLASH POST-NEWS INTRADAY MARKET UPDATE**.
 
-WRITING & FORMATTING RULES:
-1. **NO SHORTCODES:** Write out FULL component names in clear, professional English.
-2. **HTML STYLING ONLY:** Use <b>BOLD</b> for headers/tickers, <i>italics</i> for macro context, and <code>code tags</code> for key prices/percentages. Do NOT use markdown asterisks (`*`) or unescaped `<` or `>` symbols.
-3. **DOUBLE SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections, individual asset breakdowns, and scoreboard entries for clean readability on mobile screens.
+WRITING RULES:
+1. **FOCUS ON SHORT-TERM MOVES (15m, 30m, 1h):** Detail short-term price action. Explain if this is an institutional breakout, liquidity sweep, or news whipsaw.
+2. **HTML STYLING ONLY:** Use <b>BOLD</b> for headers/tickers, <i>italics</i> for context, and <code>code tags</code> for key numbers/prices.
+3. **DOUBLE SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections and asset breakdowns.
 
-SYSTEM INPUT DATA:
+INPUT DATA:
 - **ACTIVE REGIME:** {regime} ({regime_desc})
-- **CLOSING/LIVE INTRADAY PRICES (14 TARGET ASSETS):**
+{flash_context}
+- **ECONOMIC CALENDAR TODAY:**
+{calendar_events}
+- **INTRADAY LOOKBACKS (15m, 30m, 1h, 24h):**
 {ohlc_prices}
 - **INTERMARKET INDICATORS:**
 {intermarket_data}
 
 REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
-🌇 <b>APEX MACRO DESK — END OF DAY (EOD) WRAP & SCOREBOARD</b>
+⚡ <b>APEX MACRO DESK — FLASH POST-NEWS UPDATE</b>
 {date_header}
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>1. 📊 DAILY MACRO RECAP & DAY IN REVIEW</b>
+<b>1. 🔥 INTRADAY MOMENTUM & CATALYST (15m–1h WINDOW)</b>
 
-• <b>Session Summary:</b> <i>Provide a 3-4 sentence high-level overview of how price moved across London and New York. Detail how bond yields, DXY, and risk sentiment closed the day.</i>
+• <b>What Just Happened:</b> <i>Provide a 3-sentence summary of price action over the last 15 to 60 minutes.</i>
+
+• <b>Price Action Verdict:</b> <code>[INSTITUTIONAL BREAKOUT / LIQUIDITY SWEEP / NEWS-DRIVEN WHIPSAW / RETEST IN PROGRESS]</code>
 
 • <b>Active Market Regime:</b> <i>{regime} — {regime_desc}</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>2. ⚖️ LONDON & NEW YORK SETUPS SCOREBOARD (VERDICT)</b>
-(Analyze today's price action against the session setups projected earlier. Evaluate 2-3 setups that were active today.)
+<b>2. 🎯 TOP MOVERS & SHORT-TERM BREAKDOWNS</b>
+
+• <b>[TICKER]</b> — <code>15m: [X%] | 30m: [Y%] | 1h: [Z%]</code>
+  - <b>Short-Term Reaction:</b> <i>Explain key levels tested or broken in the last 15–60 minutes.</i>
+
+• <b>[TICKER]</b> — <code>15m: [X%] | 30m: [Y%] | 1h: [Z%]</code>
+  - <b>Short-Term Reaction:</b> <i>Explain key levels tested or broken in the last 15–60 minutes.</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>3. 🧭 IMMEDIATE TACTICAL GUIDANCE (NEXT 1–2 HOURS)</b>
+
+• <b>USD & Yield Outlook:</b> <i>1 sentence on expected USD direction.</i>
+
+• <b>Trade Execution Caution:</b> <i>2 sentences advising whether to chase momentum or wait for retests.</i>
+"""
+
+    # ----------------------------------------------------
+    # B. END OF DAY (EOD) WRAP TEMPLATE (STATE-AWARE)
+    # ----------------------------------------------------
+    elif mode == "eod":
+        prompt = f"""
+You are the Chief Market Analyst at Apex Macro Desk. Synthesize an **END OF DAY (EOD) MACRO SCOREBOARD & NEXT-DAY OUTLOOK**.
+
+CRITICAL EVALUATION INSTRUCTIONS:
+Evaluate the REAL trade setups issued during today's London/NY sessions (provided below) against today's closing prices. Determine whether targets or stop losses were hit.
+
+INPUT DATA:
+- **ACTIVE REGIME:** {regime} ({regime_desc})
+- **TODAY'S SCHEDULED NEWS EVENTS:**
+{calendar_events}
+- **RECORDED SESSION SETUPS FROM TODAY:**
+{history_context}
+- **CLOSING & INTRADAY PRICES (14 TARGET ASSETS):**
+{ohlc_prices}
+- **INTERMARKET INDICATORS:**
+{intermarket_data}
+
+REQUIRED TELEGRAM OUTPUT STRUCTURE:
+
+Gl <b>APEX MACRO DESK — END OF DAY (EOD) WRAP & SCOREBOARD</b>
+{date_header}
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>1. 📊 DAILY MACRO RECAP & DAY IN REVIEW</b>
+
+• <b>Session Summary:</b> <i>3-4 sentence high-level overview of price action across London and NY.</i>
+
+• <b>Active Market Regime:</b> <i>{regime} — {regime_desc}</i>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>2. ⚖️ TODAY'S SETUPS SCOREBOARD & POST-MORTEM</b>
+(Evaluate today's London & NY trade setups listed in historical context above against actual closing prices)
 
 • <b>[TICKER] — [BUY / SELL]</b>
   - <b>Outcome Verdict:</b> <code>[🎯 TARGET HIT / 🛑 STOP LOSS HIT / ⚠️ INVALIDATED / ⏳ IN PROGRESS]</code>
   - <b>Executed Zone:</b> <code>[Price Level]</code> | <b>Peak Move:</b> <code>[Price / Pips]</code>
-  - <b>Post-Mortem Analysis:</b> <i>Explain in 2 sentences WHY the trade succeeded or failed based on intraday order flow or news releases during London/NY.</i>
+  - <b>Post-Mortem Analysis:</b> <i>Explain in 2 sentences WHY the trade succeeded or failed based on order flow or news releases today.</i>
 
 • <b>[TICKER] — [BUY / SELL]</b>
   - <b>Outcome Verdict:</b> <code>[🎯 TARGET HIT / 🛑 STOP LOSS HIT / ⚠️ INVALIDATED / ⏳ IN PROGRESS]</code>
@@ -183,9 +391,9 @@ REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
 <b>3. 🔄 INTRADAY DEVELOPMENTS & NARRATIVE SHIFT</b>
 
-• <b>Key Catalyst Events:</b> <i>Detail 2 specific news events, economic data releases, or central bank comments from today's London/NY sessions and how the market reacted.</i>
+• <b>Key Catalyst Events:</b> <i>Detail 2 specific news events from today and how price reacted.</i>
 
-• <b>Impact on Next-Day Thesis:</b> <i>Explain in 2 plain English sentences whether today's developments INVALIDATED, REINFORCED, or SHIFTED our higher-timeframe bias for tomorrow.</i>
+• <b>Impact on Next-Day Thesis:</b> <i>Explain whether today's developments INVALIDATED, REINFORCED, or SHIFTED our higher-timeframe bias for tomorrow.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -194,47 +402,43 @@ REQUIRED TELEGRAM OUTPUT STRUCTURE:
 • <b>DXY & Dollar Direction:</b> 🟢 BULLISH / 🔴 BEARISH / ⚪ NEUTRAL
   ↳ <i>1 sentence explaining tomorrow's USD bias.</i>
 
-• <b>Risk-On vs. Risk-Off Sentiment:</b> <i>1 sentence on expected equity & crypto momentum overnight into the Asian session.</i>
+• <b>Risk Sentiment:</b> <i>1 sentence on expected equity & crypto momentum overnight.</i>
 
 • <b>Tomorrow's Key Pivot Levels:</b>
-  - <code>GOLD</code>: Watch <code>[Key Support/Resistance]</code>
-  - <code>EURUSD</code>: Watch <code>[Key Support/Resistance]</code>
-  - <code>SP500 / BTC</code>: Watch <code>[Key Support/Resistance]</code>
+  - <code>GOLD</code>: Watch <code>[Key Level]</code>
+  - <code>EURUSD</code>: Watch <code>[Key Level]</code>
+  - <code>SP500 / BTC</code>: Watch <code>[Key Level]</code>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>5. 💡 INSTITUTIONAL EDGE — TRADING LESSON OF THE DAY</b>
 
-• <b>Daily Takeaway:</b> <i>Write an insightful 2-sentence lesson based on today's price action (e.g., liquidity sweeps before news, fakeouts at session opens, yield divergence, or managing risk during high-volatility releases).</i>
+• <b>Daily Takeaway:</b> <i>Write a 2-sentence trading takeaway based on today's price behavior.</i>
 """
 
     # ----------------------------------------------------
-    # B. STANDARD INTRADAY / SESSION TEMPLATE (LONDON, NY, UPDATE)
+    # C. STANDARD SESSION TEMPLATE (LONDON & NEW YORK)
     # ----------------------------------------------------
     else:
-        header_title = "⚡ <b>APEX MACRO DESK — FLASH POST-NEWS MARKET UPDATE</b>" if is_flash_update else f"🏛️ <b>APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE</b>"
-        flash_context = f"\n⚠️ <b>FLASH UPDATE TRIGGERED BY:</b> {trigger_reason}\n" if is_flash_update and trigger_reason else ""
-
         prompt = f"""
-You are the Chief Market Analyst at Apex Macro Desk. Create an easy-to-read, beginner-friendly **{mode.upper()} SESSION MARKET REPORT**.
+You are the Chief Market Analyst at Apex Macro Desk. Create a beginner-friendly **{mode.upper()} SESSION MARKET REPORT**.
 
-WRITING & FORMATTING RULES:
-1. **NO SHORTCODES:** Always write out the FULL, complete component names in plain, professional English.
-2. **SIMPLE LANGUAGE:** Explain concepts in clear everyday English. Avoid dense Wall Street jargon.
-3. **VISUAL SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections, paragraphs, and individual asset breakdowns.
-4. **HTML STYLING:** Use <b>BOLD</b> for titles and tickers, <i>italics</i> for explanations, and <code>code tags</code> for prices/times. Do NOT use markdown asterisks (`*`) or unescaped `<` or `>` symbols.
+WRITING RULES:
+1. **HTML STYLING ONLY:** Use <b>BOLD</b> for headers/tickers, <i>italics</i> for explanations, and <code>code tags</code> for key numbers/prices.
+2. **DOUBLE SPACING:** Leave DOUBLE LINE BREAKS (`\n\n`) between sections and asset breakdowns.
 
-SYSTEM INPUT DATA:
+INPUT DATA:
 - **ACTIVE REGIME:** {regime} ({regime_desc})
-{flash_context}
-- **LIVE INTRADAY PRICES (14 TARGET ASSETS):**
+- **TODAY'S ECONOMIC CALENDAR:**
+{calendar_events}
+- **LIVE INTRADAY PRICES & SHORT-TERM LOOKBACKS (15m, 30m, 1h, 24h):**
 {ohlc_prices}
 - **INTERMARKET INDICATORS:**
 {intermarket_data}
 
 REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
-{header_title}
+🏛️ <b>APEX MACRO DESK — {mode.upper()} SESSION INTELLIGENCE</b>
 {date_header}
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -242,64 +446,59 @@ REQUIRED TELEGRAM OUTPUT STRUCTURE:
 
 • <b>Active Market Regime:</b> <i>{regime} — {regime_desc}</i>
 
-• <b>Interest Rate & Bond Yield Differentials:</b> <i>2 plain English sentences explaining how bond yield movements and real interest rate gaps are driving capital flows.</i>
+• <b>Scheduled Economic Risk:</b> <i>2 sentences analyzing today's economic releases.</i>
 
-• <b>Central Bank Policy Stance:</b> <i>2 plain English sentences explaining expectations for the Fed, ECB, and BOE.</i>
+• <b>Interest Rate & Bond Yield Differentials:</b> <i>2 plain English sentences on bond yield impacts.</i>
 
-• <b>Growth & Macro Divergence:</b> <i>2 plain English sentences comparing economic performance across key regions.</i>
+• <b>Central Bank Policy Stance:</b> <i>2 plain English sentences on Fed/ECB/BOE expectations.</i>
 
-• <b>Market Sentiment & Volatility Dynamics:</b> <i>2 plain English sentences assessing fear levels, risk-on/risk-off sentiment, and VIX status.</i>
-
-• <b>Institutional Order Flow & Positioning:</b> <i>2 plain English sentences on big money movements and order flows right now.</i>
+• <b>Market Sentiment & Volatility:</b> <i>2 plain English sentences on VIX and risk sentiment.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>2. 🥇 MAJOR FOREX PAIRS & DXY</b>
-(Evaluate ONLY these 7 assets: DXY, EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF)
+(Evaluate ONLY: DXY, EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF)
 
-Format every single asset with double line spacing like this:
+Format each asset:
 
-<b>EURUSD</b> 🟢 BULLISH | Price: <code>1.0850</code>
-↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining drivers based on recent news and yields.</i>
-
-<b>GBPUSD</b> 🔴 BEARISH | Price: <code>1.2620</code>
-↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining drivers.</i>
+<b>EURUSD</b> 🟢 BULLISH | Price: <code>1.0850</code> (<code>1h: +0.12%</code>)
+↳ <b>Macro Drivers:</b> <i>1-2 sentences explaining drivers based on yields and news.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>3. 📈 INDICES & COMMODITIES</b>
-(Evaluate ONLY these 5 assets: GOLD, SILVER, SP500, NAS100, GER40)
+(Evaluate ONLY: GOLD, SILVER, SP500, NAS100, GER40)
 
-Format each asset with double line spacing:
+Format each asset:
 
-<b>GOLD</b> 🟢 BULLISH | Price: <code>2400.50</code>
-↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining market drivers.</i>
+<b>GOLD</b> 🟢 BULLISH | Price: <code>2400.50</code> (<code>1h: +0.35%</code>)
+↳ <b>Macro Drivers:</b> <i>1-2 sentences explaining market drivers.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>4. 🪙 CRYPTO ASSETS</b>
-(Evaluate ONLY these 2 assets: BTCUSDT, ETHUSDT)
+(Evaluate ONLY: BTCUSDT, ETHUSDT)
 
-Format each asset with double line spacing:
+Format each asset:
 
-<b>BTCUSDT</b> ⚪ NEUTRAL | Price: <code>64200.00</code>
-↳ <b>Macro Drivers:</b> <i>Write 1-2 plain English sentences explaining market drivers.</i>
+<b>BTCUSDT</b> ⚪ NEUTRAL | Price: <code>64200.00</code> (<code>1h: -0.05%</code>)
+↳ <b>Macro Drivers:</b> <i>1-2 sentences explaining market drivers.</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>5. 🎯 HIGH CONVICTION SETUPS</b>
-(Pick the 2-3 best trade setups where interest rates, risk sentiment, and institutional flows all point in the same direction)
+(Pick the 2-3 best trade setups where rates, sentiment, and flows align)
 
 • <b>[ASSET TICKER] — [BUY / SELL]</b>
   - <b>Trigger Zone:</b> <code>[Price]</code>
   - <b>Target Price:</b> <code>[Price]</code> | <b>Stop Loss:</b> <code>[Price]</code>
-  - <b>Trade Game Plan:</b> <i>1 plain English sentence explaining why interest rates, risk sentiment, and market flows align for this setup.</i>
+  - <b>Trade Game Plan:</b> <i>1 sentence explaining why rates, sentiment, and flows align.</i>
 """
 
     model_candidates = [
         "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite"
+        "gemini-2.5-flash",
+        "gemini-2.0-flash"
     ]
     last_exception = None
 
@@ -318,31 +517,7 @@ Format each asset with double line spacing:
     raise last_exception
 
 # ==========================================
-# 4. BANNER IMAGE GENERATOR
-# ==========================================
-def generate_banner(mode: str, regime: str) -> io.BytesIO:
-    fig, ax = plt.subplots(figsize=(8, 2.5), facecolor='#0D1117')
-    ax.set_facecolor('#0D1117')
-    ax.axis('off')
-
-    title = "APEX MACRO DESK"
-    subtitle = "EOD WRAP & SCOREBOARD" if mode == "eod" else ("FLASH POST-NEWS UPDATE" if mode in ["update", "auto_check"] else f"{mode.upper()} SESSION INTELLIGENCE")
-    regime_badge = f"ACTIVE REGIME: {regime}"
-    date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d | %H:%M UTC")
-
-    ax.text(0.5, 0.70, title, color='#58A6FF', fontsize=22, fontweight='bold', ha='center', va='center')
-    ax.text(0.5, 0.48, subtitle, color='#FF7B72' if mode in ["update", "auto_check"] else '#FFFFFF', fontsize=12, fontweight='bold', ha='center', va='center')
-    ax.text(0.5, 0.28, regime_badge, color='#3FB950', fontsize=10, fontweight='bold', ha='center', va='center')
-    ax.text(0.5, 0.12, date_str, color='#8B949E', fontsize=8, ha='center', va='center')
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=150, facecolor=fig.get_facecolor())
-    buf.seek(0)
-    plt.close(fig)
-    return buf
-
-# ==========================================
-# 5. TELEGRAM DISPATCH WITH CHUNKING
+# 7. TELEGRAM DISPATCH ENGINE
 # ==========================================
 def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.BytesIO):
     photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
@@ -388,10 +563,10 @@ def send_telegram(bot_token: str, chat_id: str, message: str, image_buf: io.Byte
     return overall_success
 
 # ==========================================
-# 6. CLI EXECUTION ENTRY POINT
+# 8. CLI EXECUTION ENTRY POINT
 # ==========================================
 def main():
-    parser = argparse.ArgumentParser(description="Apex Macro Desk Decision System")
+    parser = argparse.ArgumentParser(description="Apex Macro Desk Production Engine")
     parser.add_argument("--mode", type=str, default="all", choices=["all", "london", "ny", "eod", "update", "auto_check"], help="Session mode")
     args = parser.parse_args()
 
@@ -399,25 +574,27 @@ def main():
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-    if not gemini_key:
-        print("ERROR: GEMINI_API_KEY environment variable is not set.")
-        sys.exit(1)
-
-    if not bot_token or not chat_id:
-        print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables must be set.")
+    if not gemini_key or not bot_token or not chat_id:
+        print("ERROR: GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, and TELEGRAM_CHAT_ID must be set.")
         sys.exit(1)
 
     print("🧠 Running Regime Classifier...")
     regime, regime_desc, vix_val, yield_val = classify_market_regime()
     print(f"   ↳ Active Regime: {regime} | VIX: {vix_val:.2f} | US10Y: {yield_val:.2f}%")
 
-    print("📊 Ingesting Intraday Market Data (14 Target Assets)...")
+    print("📅 Fetching Scheduled High-Impact Economic News Events...")
+    calendar_events = fetch_economic_calendar()
+
+    print("📊 Ingesting Market Data (14 Assets — 15m, 30m, 1h Lookbacks)...")
     ohlc_prices, momentum_triggers = fetch_market_data()
 
     print("🌐 Ingesting Intermarket Data & Yields...")
     intermarket_data = fetch_intermarket_data()
 
-    # Automatic Post-News Volatility Evaluation
+    print("💾 Loading Historical Daily State...")
+    past_state = load_daily_state()
+
+    # Automatic Volatility Evaluation
     trigger_reason = ""
     if args.mode == "auto_check":
         if momentum_triggers or vix_val > 22.0:
@@ -426,7 +603,7 @@ def main():
             print(f"⚡ VOLATILITY TRIGGER DETECTED: {trigger_reason}")
             modes_to_run = ["update"]
         else:
-            print("⚖️ Market stable. No 1h momentum or news surge detected (>0.40%). Skipping automatic broadcast.")
+            print("⚖️ Market stable. No significant short-term move detected. Skipping automatic broadcast.")
             sys.exit(0)
     elif args.mode == "all":
         modes_to_run = ["london", "ny", "eod"]
@@ -436,17 +613,19 @@ def main():
     for current_mode in modes_to_run:
         print(f"\n🚀 Processing [{current_mode.upper()} SESSION]...")
 
-        print("🤖 Synthesizing Institutional Macro Report with Gemini...")
-        report_text = generate_report(current_mode, intermarket_data, ohlc_prices, regime, regime_desc, gemini_key, trigger_reason)
+        print("🤖 Synthesizing Institutional Macro Report with Gemini 3.5 Flash...")
+        report_text = generate_report(current_mode, intermarket_data, ohlc_prices, regime, regime_desc, calendar_events, past_state, gemini_key, trigger_reason)
 
-        print("🖼️ Generating Session Banner Graphic...")
+        print("🖼️ Generating Technical Chart & Session Banner Graphic...")
         banner_buf = generate_banner(current_mode, regime)
 
         print("📡 Broadcasting Session Intelligence directly to Telegram...")
         success = send_telegram(bot_token, chat_id, report_text, banner_buf)
 
         if success:
-            print(f"✅ [{current_mode.upper()}] Report broadcasted successfully to Telegram!")
+            print(f"✅ [{current_mode.upper()}] Report broadcasted successfully!")
+            # Persist trade setup predictions for EOD evaluation
+            save_daily_state(current_mode, report_text)
         else:
             print(f"❌ [{current_mode.upper()}] Broadcast failed.")
             sys.exit(1)
