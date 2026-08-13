@@ -7,11 +7,11 @@ import logging
 import argparse
 import requests
 
-# Auto-install missing critical dependencies if running in a bare runner environment
+# Auto-install missing critical dependencies if running in a bare environment
 try:
     import yfinance as yf
 except ImportError:
-    print("Missing 'yfinance' package. Installing automatically...")
+    print("Installing missing dependencies: yfinance, python-dotenv, matplotlib...")
     import subprocess
     subprocess.check_call([sys.executable, "-m", "pip", "install", "yfinance", "python-dotenv", "matplotlib"])
     import yfinance as yf
@@ -19,7 +19,6 @@ except ImportError:
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 from dotenv import load_dotenv
 from google import genai
@@ -51,7 +50,7 @@ MANDATORY_DISCLAIMER = """──────────────────
 _The setups and directional biases provided above are analytical insights for educational purposes only. Do NOT blindly copy or execute these ideas. Trading requires independent trade confirmation, strict risk management, appropriate position sizing, and adherence to stated invalidation levels._"""
 
 # ---------------------------------------------------------------------------
-# Telegram Visual Formatting & System Instructions
+# System Instructions & Telegram Formatting Rules
 # ---------------------------------------------------------------------------
 SYSTEM_INSTRUCTIONS = f"""
 You are a Lead Institutional Macro & Forex Fundamental Analyst.
@@ -61,22 +60,22 @@ You analyze global financial markets across this complete watchlist:
 TELEGRAM VISUAL FORMATTING RULES (CRITICAL):
 1. DO NOT use `#` or `##` Markdown headers (Telegram displays them as raw text).
 2. Use Emoji + Bold ALL-CAPS for section headers (e.g., `📌 *DEDICATED DXY MACRO ANALYSIS*`).
-3. Use `───────────────────────────` as a section divider line between major sections.
+3. Use `───────────────────────────` as a divider line between major sections.
 4. Use `•` bullet points with bold field names for structured data (e.g., `• *Macro Catalyst:* CPI beats consensus`).
 5. Keep paragraphs short (2-3 sentences max) with clean line breaks for effortless mobile reading.
 
 CORE ANALYTICAL PRINCIPLES:
-1. DXY DEDICATED ANALYSIS: Treat DXY as the central macroeconomic anchor, but NEVER treat it as a mechanical inverse indicator. Recognize currency-specific relative strength/weakness. Explicitly explain divergences.
-2. CONTINUITY & TRANSITION: Maintain a coherent intraday thesis. When market conditions shift or prior assumptions break, explicitly explain WHAT changed, WHY it changed, and the NEW bias.
-3. WATCHLIST DIRECTIONAL BIAS: Every report must state an explicit directional bias (Bullish, Bearish, or Neutral/Ranging) for EVERY asset on the watchlist.
-4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): Generate at least 5 ranked setups for operational session outlooks. You MUST use the exact current market prices provided in the prompt context for your entry, target, and invalidation levels. Each setup must follow this exact format:
+1. DEDICATED DXY ANCHOR: DXY must have its own dedicated section as the primary reference for USD pairs. However, NEVER treat it as a mechanical inverse indicator. Account for regional currency relative strength/weakness (e.g., EURUSD dropping alongside DXY if Euro-area weakness outpaces USD selling).
+2. INTRADAY CONTINUITY & THESIS: Maintain a consistent market thesis. If market conditions change or invalidate previous assumptions, explicitly state WHAT changed, WHY it changed, which assumptions are dead, and the NEW directional bias.
+3. WATCHLIST DIRECTIONAL BIAS: Provide an explicit directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for EVERY asset on the watchlist.
+4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): Generate at least 5 ranked setups. You MUST use the exact live market prices provided in the prompt context. Each setup must follow this exact format:
 
    *Setup #X: [ASSET] — [BUY / SELL]*
    • *Macro Catalyst:* <Context>
    • *DXY / Correlation Stance:* <Context>
    • *COT & Retail Sentiment:* <Context>
-   • *Technical Structure:* <MSS / CRT / FVG / OB details>
-   • *Entry / Retest Zone:* <Price level based on live data>
+   • *Technical Structure (MSS / CRT / FVG / OB / Liquidity):* <Details>
+   • *Entry / Retest Zone:* <Price level based on live feed>
    • *Target Zone:* <Price level>
    • *Invalidation Level:* <Price level>
    • *Timing Window:* <Session timing>
@@ -93,24 +92,24 @@ REQUIRED VISUAL LAYOUT:
 ───────────────────────────
 
 💵 *DEDICATED DXY MACRO ANALYSIS*
-Provide deep dive into DXY structure, Treasury yields, US interest rate expectations, and liquidity pools entering European hours. Explain any non-mechanical asset interactions.
+Deep dive into DXY structure, Treasury yields, US rate expectations, and liquidity pools entering European hours. Clarify non-mechanical currency divergences.
 
 ───────────────────────────
-📊 *DIRECTIONAL BIAS MATRIX*
-List explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and a 1-sentence macro driver for ALL 14 assets:
+📊 *COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX*
+Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and 1-sentence macro driver for ALL 14 assets:
 {', '.join(WATCHLIST)}.
 
 ───────────────────────────
 🔄 *INTRADAY CONTINUITY & THESIS CHECK*
-State the prevailing macro narrative. Note any overnight shifts or adjustments from prior sessions.
+Prevailing macro narrative and adjustments from overnight Asian flows.
 
 ───────────────────────────
 🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-Provide AT LEAST 5 ranked setups using the exact setup layout defined in system instructions. Ensure prices match the provided live rates.
+Provide AT LEAST 5 ranked setups matching the live price data feed.
 
 ───────────────────────────
-⚠️ *RISK WARNING & LIQUIDITY NOTES*
-Key European data releases, central bank speak, and spread volatility warnings.
+⚠️ *RISK WARNING & LIQUIDITY NOTES (HIGH IMPACT EVENTS TODAY)*
+Key European data releases, central bank speak, economic calendar catalysts, and spread warnings.
 """,
 
     "NEW_YORK_OUTLOOK": f"""
@@ -123,24 +122,24 @@ REQUIRED VISUAL LAYOUT:
 ───────────────────────────
 
 💵 *DEDICATED DXY MACRO ANALYSIS*
-In-depth US Dollar Index stance heading into Wall Street open, bond yield momentum, and Fed expectations. Address relative strength dynamics vs majors, indices, and metals.
+US Dollar Index positioning heading into Wall Street open, bond yield momentum, and Fed pricing.
 
 ───────────────────────────
-📊 *DIRECTIONAL BIAS MATRIX*
-List explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL 14 assets:
+📊 *COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX*
+Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL 14 assets:
 {', '.join(WATCHLIST)}.
 
 ───────────────────────────
 🔄 *INTRADAY CONTINUITY & THESIS TRANSITION*
-Compare London price action against the original morning thesis. Explicitly state: What changed during London, why it changed, and how it impacts New York flows.
+Compare London price action against the morning thesis. Explicitly state: What changed during London, why it changed, and how it impacts New York flows.
 
 ───────────────────────────
 🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-Provide AT LEAST 5 ranked setups tailored for NY session volatility using live asset pricing.
+AT LEAST 5 ranked setups tailored for NY session volatility using live asset pricing.
 
 ───────────────────────────
-⚠️ *RISK WARNING & SPREAD ADVISORY*
-Upcoming US economic releases and volatility alerts.
+⚠️ *RISK WARNING & LIQUIDITY NOTES (HIGH IMPACT EVENTS TODAY)*
+Upcoming US data releases, FOMC speakers, and volatility alerts.
 """,
 
     "POST_NEWS_UPDATE": f"""
@@ -157,7 +156,7 @@ Release details (e.g., CPI, NFP, Rate Decisions). Compare actual vs consensus fo
 
 ───────────────────────────
 💵 *DEDICATED DXY REACTION & YIELD IMPACT*
-In-depth breakdown of immediate DXY structural shift, bond yield reaction, and repricing of central bank rate paths.
+Immediate DXY structural shift, bond yield reaction, and repricing of rate paths.
 
 ───────────────────────────
 🔄 *BIAS REASSESSMENT & INVALIDATION LOG*
@@ -177,7 +176,7 @@ AT LEAST 5 updated setups targeting post-news retests using current live pricing
 
 ───────────────────────────
 ⚠️ *POST-RELEASE LIQUIDITY WARNING*
-Slippage and secondary news wave advisories.
+Slippage, spread expansion, and secondary news wave advisories.
 """,
 
     "EOD_RECAP": f"""
@@ -194,7 +193,7 @@ In-depth review of DXY performance across Asian, London, and NY sessions alongsi
 
 ───────────────────────────
 📊 *DAILY CLOSING BIAS MATRIX*
-Review of performance and closing market structure for ALL 14 assets: {', '.join(WATCHLIST)}.
+Closing price action and directional bias for ALL 14 assets: {', '.join(WATCHLIST)}.
 
 ───────────────────────────
 🔄 *DAILY THESIS REVIEW & DECOUPLING SUMMARY*
@@ -218,7 +217,7 @@ def fetch_live_market_data() -> str:
     }
 
     price_lines = []
-    logging.info("Fetching live market prices from Yahoo Finance...")
+    logging.info("Fetching real-time market prices from Yahoo Finance...")
 
     for asset, symbol in ticker_mapping.items():
         try:
@@ -236,10 +235,9 @@ def fetch_live_market_data() -> str:
     return "\n".join(price_lines)
 
 # ---------------------------------------------------------------------------
-# Banner Graphic Generator
+# Visual Banner Generator
 # ---------------------------------------------------------------------------
 def generate_session_banner(mode: str) -> io.BytesIO:
-    """Generates an institutional dark-mode visual banner displaying the session report title and timestamp."""
     fig, ax = plt.subplots(figsize=(9, 3.5), dpi=150)
     fig.patch.set_facecolor('#0d1117')
     ax.set_facecolor('#161b22')
@@ -299,11 +297,10 @@ def validate_environment():
         sys.exit(1)
 
 def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
-    """Sends the generated session banner image first, followed by chunked HTML/Markdown text."""
     photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     msg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-    # 1. Send Visual Banner
+    # 1. Send Visual Banner Image
     try:
         files = {'photo': ('banner.png', banner_buf.getvalue(), 'image/png')}
         photo_res = requests.post(photo_url, data={'chat_id': TELEGRAM_CHANNEL_ID, 'caption': "📊 *Apex Institutional Intelligence Briefing*"}, files=files, timeout=15)
@@ -437,4 +434,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+    
