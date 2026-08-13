@@ -65,8 +65,10 @@ TELEGRAM VISUAL FORMATTING RULES (CRITICAL):
 5. Keep paragraphs short (2-3 sentences max) with clean line breaks for effortless mobile reading.
 
 CORE ANALYTICAL PRINCIPLES:
-1. DEDICATED DXY ANCHOR: DXY must have its own dedicated section as the primary reference for USD pairs. However, NEVER treat it as a mechanical inverse indicator. Account for regional currency relative strength/weakness (e.g., EURUSD dropping alongside DXY if Euro-area weakness outpaces USD selling).
-2. INTRADAY CONTINUITY & THESIS: Maintain a consistent market thesis. If market conditions change or invalidate previous assumptions, explicitly state WHAT changed, WHY it changed, which assumptions are dead, and the NEW directional bias.
+1. DEDICATED DXY ANCHOR: DXY must have its own dedicated section as the primary reference for USD pairs. However, NEVER treat it as a mechanical inverse indicator. Account for regional currency relative strength/weakness.
+2. INTRADAY MATERIAL CHANGE GATEKEEPER: When evaluating intraday market updates or news events, FIRST assess if there is a genuine material shift in DXY bias, asset biases, or setups.
+   - IF NO MATERIAL CHANGE HAS OCCURRED: Start your entire response with `[NO_MATERIAL_CHANGE]` followed by a brief 1-2 sentence explanation of why the current thesis holds. Do NOT generate a full report.
+   - IF A MATERIAL CHANGE HAS OCCURRED: Start your response with `[MATERIAL_CHANGE]` and proceed with the full Intraday Update Report format.
 3. WATCHLIST DIRECTIONAL BIAS: Provide an explicit directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for EVERY asset on the watchlist.
 4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): Generate at least 5 ranked setups. You MUST use the exact live market prices provided in the prompt context. Each setup must follow this exact format:
 
@@ -104,7 +106,7 @@ Prevailing macro narrative and adjustments from overnight Asian flows.
 
 ───────────────────────────
 🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-Provide AT LEAST 5 ranked setups matching the live price data feed using the exact setup format defined in system instructions.
+Provide AT LEAST 5 ranked setups matching the live price data feed.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES (HIGH IMPACT EVENTS TODAY)*
@@ -134,48 +136,48 @@ Compare London price action against the morning thesis. Explicitly state: What c
 
 ───────────────────────────
 🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-AT LEAST 5 ranked setups tailored for NY session volatility using live asset pricing and the exact setup format defined in system instructions.
+AT LEAST 5 ranked setups tailored for NY session volatility using live asset pricing.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES (HIGH IMPACT EVENTS TODAY)*
 Upcoming US data releases, FOMC speakers, and volatility alerts.
 """,
 
-    "POST_NEWS_UPDATE": f"""
-Generate a **POST-NEWS ANALYSIS & REACTION REPORT** for Telegram.
+    "INTRADAY_UPDATE": f"""
+Evaluate recent market price action and catalysts for an **INTRADAY UPDATE REPORT**.
 Watchlist: {', '.join(WATCHLIST)}
 
-REQUIRED VISUAL LAYOUT:
+INSTRUCTIONS:
+First, determine if recent events or price action have caused a MATERIAL CHANGE in the market thesis, DXY stance, or setup validity.
+- If NO material change: Begin output with `[NO_MATERIAL_CHANGE]` and explain why.
+- If YES (material change): Begin output with `[MATERIAL_CHANGE]` and generate the report below.
 
-📰 *POST-NEWS FLASH ANALYSIS*
+REQUIRED VISUAL LAYOUT (Only if [MATERIAL_CHANGE]):
+
+🔄 *INTRADAY THESIS & BIAS SHIFT*
 ───────────────────────────
 
-📊 *EVENT BREAKDOWN & DATA OUTCOME*
-Release details (e.g., CPI, NFP, Rate Decisions). Compare actual vs consensus forecast.
+📌 *EVENT BREAKDOWN & MATERIAL SHIFT*
+• *Previous Analysis Summary:* <Brief recap of earlier bias>
+• *Catalyst / Market Movement:* <What occurred>
+• *Invalidations & Assumptions Broken:* <Which biases/setups are now dead>
+• *New Core Market Thesis:* <Updated macro stance>
 
 ───────────────────────────
 💵 *DEDICATED DXY REACTION & YIELD IMPACT*
-Immediate DXY structural shift, bond yield reaction, and repricing of rate paths.
-
-───────────────────────────
-🔄 *BIAS REASSESSMENT & INVALIDATION LOG*
-Explicitly answer:
-• What changed in the macro picture?
-• Which prior biases/assumptions are NO LONGER VALID?
-• Which existing setups were invalidated by this event?
-• What is the updated directional bias across the watchlist?
+Shift in DXY structure, bond yields, and interest rate expectations.
 
 ───────────────────────────
 📊 *UPDATED DIRECTIONAL BIAS MATRIX*
-Post-news bias for ALL 14 assets: {', '.join(WATCHLIST)}.
+Post-event bias for ALL 14 assets: {', '.join(WATCHLIST)}.
 
 ───────────────────────────
-🎯 *TOP POST-NEWS HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-AT LEAST 5 updated setups targeting post-news retests using current live pricing and the exact setup format defined in system instructions.
+🎯 *UPDATED HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
+AT LEAST 5 updated setups reflecting the new thesis using live market prices.
 
 ───────────────────────────
-⚠️ *POST-RELEASE LIQUIDITY WARNING*
-Slippage, spread expansion, and secondary news wave advisories.
+⚠️ *RISK WARNING & LIQUIDITY NOTES*
+Slippage, spread expansion, and session liquidity advisories.
 """,
 
     "EOD_RECAP": f"""
@@ -244,7 +246,7 @@ def generate_session_banner(mode: str) -> io.BytesIO:
     display_titles = {
         "LONDON_OUTLOOK": "LONDON SESSION OUTLOOK",
         "NEW_YORK_OUTLOOK": "NEW YORK SESSION OUTLOOK",
-        "POST_NEWS_UPDATE": "POST-NEWS FLASH ANALYSIS",
+        "INTRADAY_UPDATE": "INTRADAY THESIS UPDATE",
         "EOD_RECAP": "END-OF-DAY MACRO RECAP"
     }
     subtitle = display_titles.get(mode, "MARKET INTELLIGENCE BRIEF")
@@ -279,7 +281,8 @@ def parse_arguments():
     mapping = {
         "LONDON": "LONDON_OUTLOOK", "LONDON_OUTLOOK": "LONDON_OUTLOOK",
         "NEW_YORK": "NEW_YORK_OUTLOOK", "NEW_YORK_OUTLOOK": "NEW_YORK_OUTLOOK", "NY": "NEW_YORK_OUTLOOK",
-        "POST_NEWS": "POST_NEWS_UPDATE", "POST_NEWS_UPDATE": "POST_NEWS_UPDATE",
+        "INTRADAY": "INTRADAY_UPDATE", "INTRADAY_UPDATE": "INTRADAY_UPDATE",
+        "POST_NEWS": "INTRADAY_UPDATE", "POST_NEWS_UPDATE": "INTRADAY_UPDATE",
         "EOD": "EOD_RECAP", "EOD_RECAP": "EOD_RECAP"
     }
 
@@ -382,6 +385,10 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
             else:
                 raise e
 
+        # Check for Intraday No Material Change flag
+        if "[NO_MATERIAL_CHANGE]" in report_text:
+            return "[NO_MATERIAL_CHANGE]"
+
         if not report_text.endswith(MANDATORY_DISCLAIMER.strip()):
             report_text += f"\n\n{MANDATORY_DISCLAIMER.strip()}"
 
@@ -414,8 +421,16 @@ def main():
 
     try:
         report = generate_report_with_retry(client=client, mode=mode, custom_feed=custom_feed)
+
+        # Gatekeeper check for suppressed intraday updates
+        if report == "[NO_MATERIAL_CHANGE]":
+            logging.info("Intraday reassessment completed: No material shift in macro thesis or setups. Telegram update suppressed.")
+            sys.exit(0)
+
+        # Clean tag if present
+        report = report.replace("[MATERIAL_CHANGE]", "").strip()
+
         logging.info("Report generation complete. Generating visual session banner...")
-        
         banner_buf = generate_session_banner(mode)
 
         logging.info("Dispatching visual banner and text report to Telegram...")
@@ -433,4 +448,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
