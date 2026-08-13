@@ -5,6 +5,7 @@ import time
 import logging
 import argparse
 import requests
+import yfinance as yf
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -50,17 +51,17 @@ TELEGRAM VISUAL FORMATTING RULES (CRITICAL):
 5. Keep paragraphs short (2-3 sentences max) with clean line breaks for effortless mobile reading.
 
 CORE ANALYTICAL PRINCIPLES:
-1. DXY DEDICATED ANALYSIS: Treat DXY as the central macroeconomic anchor, but NEVER treat it as a mechanical inverse indicator. Recognize currency-specific relative strength/weakness (e.g., EURUSD can drop during DXY weakness if EUR weakness outpaces USD weakness). Explicitly explain these divergences.
-2. CONTINUITY & TRANSITION: Maintain a coherent intraday thesis. When market conditions shift or prior assumptions break, explicitly explain WHAT changed, WHY it changed, which previous assumptions were invalidated, and the NEW bias.
+1. DXY DEDICATED ANALYSIS: Treat DXY as the central macroeconomic anchor, but NEVER treat it as a mechanical inverse indicator. Recognize currency-specific relative strength/weakness. Explicitly explain divergences.
+2. CONTINUITY & TRANSITION: Maintain a coherent intraday thesis. When market conditions shift or prior assumptions break, explicitly explain WHAT changed, WHY it changed, and the NEW bias.
 3. WATCHLIST DIRECTIONAL BIAS: Every report must state an explicit directional bias (Bullish, Bearish, or Neutral/Ranging) for EVERY asset on the watchlist.
-4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): Generate at least 5 ranked setups for operational session outlooks and post-news reports. Each setup must follow this exact format:
+4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): Generate at least 5 ranked setups for operational session outlooks. You MUST use the exact current market prices provided in the prompt context for your entry, target, and invalidation levels. Each setup must follow this exact format:
 
    *Setup #X: [ASSET] — [BUY / SELL]*
    • *Macro Catalyst:* <Context>
    • *DXY / Correlation Stance:* <Context>
    • *COT & Retail Sentiment:* <Context>
    • *Technical Structure:* <MSS / CRT / FVG / OB details>
-   • *Entry / Retest Zone:* <Price level>
+   • *Entry / Retest Zone:* <Price level based on live data>
    • *Target Zone:* <Price level>
    • *Invalidation Level:* <Price level>
    • *Timing Window:* <Session timing>
@@ -90,7 +91,7 @@ State the prevailing macro narrative. Note any overnight shifts or adjustments f
 
 ───────────────────────────
 🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-Provide AT LEAST 5 ranked setups using the exact setup layout defined in system instructions.
+Provide AT LEAST 5 ranked setups using the exact setup layout defined in system instructions. Ensure prices match the provided live rates.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES*
@@ -120,7 +121,7 @@ Compare London price action against the original morning thesis. Explicitly stat
 
 ───────────────────────────
 🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-Provide AT LEAST 5 ranked setups tailored for NY session volatility using the exact setup layout defined in system instructions.
+Provide AT LEAST 5 ranked setups tailored for NY session volatility using live asset pricing.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & SPREAD ADVISORY*
@@ -157,7 +158,7 @@ Post-news bias for ALL 14 assets: {', '.join(WATCHLIST)}.
 
 ───────────────────────────
 🎯 *TOP POST-NEWS HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-AT LEAST 5 updated setups targeting post-news retests, FVG fills, or liquidity sweeps.
+AT LEAST 5 updated setups targeting post-news retests using current live pricing.
 
 ───────────────────────────
 ⚠️ *POST-RELEASE LIQUIDITY WARNING*
@@ -189,6 +190,47 @@ Summary of key market drivers, unexpected decoupling events, and structural tren
 Key high-impact events for upcoming sessions and early directional context.
 """
 }
+
+# ---------------------------------------------------------------------------
+# Live Data Fetcher Helper
+# ---------------------------------------------------------------------------
+def fetch_live_market_data() -> str:
+    """Fetches real-time price quotes for the watchlist using Yahoo Finance tickers."""
+    ticker_mapping = {
+        "EURUSD": "EURUSD=X",
+        "GBPUSD": "GBPUSD=X",
+        "NZDUSD": "NZDUSD=X",
+        "AUDUSD": "AUDUSD=X",
+        "USDCHF": "USDCHF=X",
+        "USDCAD": "USDCAD=X",
+        "GOLD": "GC=F",
+        "SILVER": "SI=F",
+        "SP500": "^GSPC",
+        "NAS100": "^NDX",
+        "DXY": "DX-Y.NYB",
+        "BTCUSDT": "BTC-USD",
+        "ETHUSDT": "ETH-USD",
+        "GER40": "^GDAXI"
+    }
+
+    price_lines = []
+    logging.info("Fetching live market prices from Yahoo Finance...")
+
+    for asset, symbol in ticker_mapping.items():
+        try:
+            t = yf.Ticker(symbol)
+            # Fetch recent fast info or history
+            todays_data = t.history(period="1d")
+            if not todays_data.empty:
+                current_price = todays_data['Close'].iloc[-1]
+                price_lines.append(f"- {asset}: {current_price:.4f}" if current_price < 10 else f"- {asset}: {current_price:.2f}")
+            else:
+                price_lines.append(f"- {asset}: Data unavailable")
+        except Exception as e:
+            logging.warning(f"Could not fetch live price for {asset} ({symbol}): {e}")
+            price_lines.append(f"- {asset}: N/A")
+
+    return "\n".join(price_lines)
 
 # ---------------------------------------------------------------------------
 # Helpers & Validation
@@ -286,8 +328,13 @@ def count_setups(report_text: str) -> int:
 
 def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 5) -> str:
     prompt = PROMPT_TEMPLATES[mode]
+    
+    # Automatically fetch and inject live asset prices into the prompt context
+    live_prices = fetch_live_market_data()
+    prompt += f"\n\nLIVE MARKET PRICE FEED (MANDATORY REFERENCE FOR ALL PRICES):\n{live_prices}"
+
     if custom_feed:
-        prompt += f"\n\nLIVE MARKET DATA / BREAKING EVENT FEED:\n{custom_feed}"
+        prompt += f"\n\nBREAKING EVENT FEED:\n{custom_feed}"
 
     report_text = ""
     setup_count = 0
@@ -331,7 +378,7 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
             return report_text
 
         logging.warning(f"Setup count validation failed ({setup_count}/5 required). Retrying with reinforced prompt...")
-        prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 5 ranked, high-conviction trade setups clearly labeled (*Setup #1*, *Setup #2*, *Setup #3*, *Setup #4*, *Setup #5*)."
+        prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 5 ranked, high-conviction trade setups clearly labeled (*Setup #1*, *Setup #2*, *Setup #3*, *Setup #4*, *Setup #5*) using the exact live prices provided."
 
     logging.warning("Max retries reached. Dispatching best output.")
     send_admin_alert(f"Mode `{mode}` generated only {setup_count}/5 setups after {max_retries} attempts.")
@@ -366,4 +413,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+        
