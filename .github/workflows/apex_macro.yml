@@ -1,43 +1,36 @@
-name: Apex Macro Desk Production Pipeline
+lname: Automated Forex Fundamental Analysis
 
 on:
   schedule:
-    # 🇬🇧 London Session Open (~06:30 GMT+1) -> 05:24 UTC
-    - cron: '24 5 * * 1-5'
-    
-    # 🇺🇸 New York Session Open (~12:30 GMT+1) -> 11:24 UTC
-    - cron: '24 11 * * 1-5'
-    
-    # 🌆 End of Day (EOD) Summary (~21:00 GMT+1) -> 19:54 UTC
-    - cron: '54 19 * * 1-5'
-
-    # ⚡ Automated Post-News Intraday Scanner (Hourly at minute 17)
-    - cron: '17 7-18 * * 1-5'
-
+    # London Outlook: 06:28 UTC
+    - cron: '28 6 * * 1-5'
+    # New York Outlook: 12:28 UTC
+    - cron: '28 12 * * 1-5'
+    # EOD Recap: 20:30 UTC
+    - cron: '30 20 * * 1-5'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Session Mode to Run'
+        description: 'Session Analysis Mode'
         required: true
-        default: 'auto_check'
+        default: 'LONDON'
         type: choice
         options:
-          - auto_check
-          - update
-          - london
-          - ny
-          - eod
-          - all
-
-permissions:
-  contents: write  # Enables state persistence auto-commit
+          - LONDON
+          - NEW_YORK
+          - POST_NEWS
+          - EOD
+      custom_feed:
+        description: 'Breaking Event Data / Live News Override (Optional)'
+        required: false
+        type: string
 
 jobs:
-  run-macro-engine:
+  analyze-and-post:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -49,47 +42,35 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yfinance matplotlib google-genai requests
+          pip install google-genai requests python-dotenv
 
-      - name: Execute Apex Macro Engine (Scheduled)
-        if: github.event_name == 'schedule'
+      - name: Determine Analysis Mode
+        id: select_mode
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "RUN_MODE=${{ github.event.inputs.mode }}" >> $GITHUB_ENV
+            echo "CUSTOM_FEED=${{ github.event.inputs.custom_feed }}" >> $GITHUB_ENV
+          else
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" -eq "06" ]; then
+              echo "RUN_MODE=LONDON" >> $GITHUB_ENV
+            elif [ "$HOUR" -eq "12" ]; then
+              echo "RUN_MODE=NEW_YORK" >> $GITHUB_ENV
+            else
+              echo "RUN_MODE=EOD" >> $GITHUB_ENV
+            fi
+          fi
+
+      - name: Execute Fundamental Analyser
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TRIGGER_CRON: ${{ github.event.schedule }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          GEMINI_MODEL: "gemini-3.5-flash"
         run: |
-          echo "⏰ Executing Trigger Match: $TRIGGER_CRON"
-          
-          case "$TRIGGER_CRON" in
-            "24 5 * * 1-5")
-              python main.py --mode london
-              ;;
-            "24 11 * * 1-5")
-              python main.py --mode ny
-              ;;
-            "54 19 * * 1-5")
-              python main.py --mode eod
-              ;;
-            *)
-              python main.py --mode auto_check
-              ;;
-          esac
-
-      - name: Execute Apex Macro Engine (Manual Dispatch)
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python main.py --mode ${{ github.event.inputs.mode }}
-
-      - name: Persist Daily State to Repository
-        if: always()
-        run: |
-          git config --global user.name "Apex Macro Bot"
-          git config --global user.email "bot@apexmacro.desk"
-          git add setups_today.json || true
-          git commit -m "update: persist daily session state [skip ci]" || true
-          git push || true
+          if [ -n "$CUSTOM_FEED" ]; then
+            python main.py --mode ${{ env.RUN_MODE }} --feed "$CUSTOM_FEED"
+          else
+            python main.py --mode ${{ env.RUN_MODE }}
+          fi
