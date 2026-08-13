@@ -13,12 +13,12 @@ on:
       mode:
         description: 'Session Analysis Mode'
         required: true
-        default: 'LONDON'
+        default: 'INTRADAY_UPDATE'
         type: choice
         options:
           - LONDON
           - NEW_YORK
-          - POST_NEWS
+          - INTRADAY_UPDATE
           - EOD
       custom_feed:
         description: 'Breaking Event Data / Live News Override (Optional)'
@@ -52,12 +52,14 @@ jobs:
             echo "CUSTOM_FEED=${{ github.event.inputs.custom_feed }}" >> $GITHUB_ENV
           else
             HOUR=$(date -u +%H)
-            if [ "$HOUR" -eq "06" ]; then
+            if [ "$HOUR" -eq "06" ] || [ "$HOUR" -eq "07" ]; then
               echo "RUN_MODE=LONDON" >> $GITHUB_ENV
-            elif [ "$HOUR" -eq "12" ]; then
+            elif [ "$HOUR" -eq "12" ] || [ "$HOUR" -eq "13" ]; then
               echo "RUN_MODE=NEW_YORK" >> $GITHUB_ENV
-            else
+            elif [ "$HOUR" -eq "20" ] || [ "$HOUR" -eq "21" ]; then
               echo "RUN_MODE=EOD" >> $GITHUB_ENV
+            else
+              echo "RUN_MODE=INTRADAY_UPDATE" >> $GITHUB_ENV
             fi
           fi
 
