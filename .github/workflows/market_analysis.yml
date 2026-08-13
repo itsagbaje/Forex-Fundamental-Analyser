@@ -2,12 +2,12 @@ name: Automated Forex Fundamental Analysis
 
 on:
   schedule:
-    # London Outlook: 06:30 UTC
-    - cron: '30 6 * * 1-5'
-    # New York Outlook: 12:30 UTC
-    - cron: '30 12 * * 1-5'
-    # EOD Recap: 20:30 UTC
-    - cron: '30 20 * * 1-5'
+    # London Outlook: 06:22 UTC
+    - cron: '22 6 * * 1-5'
+    # New York Outlook: 12:22 UTC
+    - cron: '22 12 * * 1-5'
+    # EOD Recap: 20:22 UTC
+    - cron: '22 20 * * 1-5'
   workflow_dispatch:
     inputs:
       mode:
