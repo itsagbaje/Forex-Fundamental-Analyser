@@ -6,6 +6,7 @@ import time
 import logging
 import argparse
 import requests
+import xml.etree.ElementTree as ET
 
 # Auto-install missing critical dependencies if running in a bare environment
 try:
@@ -65,14 +66,14 @@ TELEGRAM VISUAL FORMATTING RULES (CRITICAL):
 5. Keep paragraphs short (2-3 sentences max) with clean line breaks for effortless mobile reading.
 
 CORE ANALYTICAL PRINCIPLES:
-1. DEDICATED DXY ANCHOR: DXY must have its own dedicated section as the primary reference for USD pairs. However, NEVER treat it as a mechanical inverse indicator. Account for regional currency relative strength/weakness.
+1. DEDICATED DXY ANCHOR: DXY must have its own dedicated section as the primary reference for USD pairs. However, NEVER treat it as a mechanical inverse indicator. Account for regional currency relative strength/weakness, Treasury yield momentum, and intermarket flows.
 2. INTRADAY MATERIAL CHANGE GATEKEEPER: When evaluating intraday market updates or news events, FIRST assess if there is a genuine material shift in DXY bias, asset biases, or setups.
    - IF NO MATERIAL CHANGE HAS OCCURRED: Start your entire response with `[NO_MATERIAL_CHANGE]` followed by a brief 1-2 sentence explanation of why the current thesis holds. Do NOT generate a full report.
    - IF A MATERIAL CHANGE HAS OCCURRED: Start your response with `[MATERIAL_CHANGE]` and proceed with the full Intraday Update Report format.
 3. WATCHLIST DIRECTIONAL BIAS: Provide an explicit directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for EVERY asset on the watchlist.
 4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): Generate at least 5 ranked setups. You MUST use the exact live market prices provided in the prompt context. Each setup must follow this exact format:
 
-   *Setup #X: [ASSET] — [BUY / SELL]*
+   *Setup #X: [ASSET] - [BUY / SELL]*
    • *Macro Catalyst:* <Context>
    • *DXY / Correlation Stance:* <Context>
    • *COT & Retail Sentiment:* <Context>
@@ -207,33 +208,74 @@ Key high-impact events for upcoming sessions and early directional context.
 }
 
 # ---------------------------------------------------------------------------
-# Live Data Fetcher Helper
+# Market Data & News Fetchers
 # ---------------------------------------------------------------------------
 def fetch_live_market_data() -> str:
     ticker_mapping = {
+        # Core Watchlist
         "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "NZDUSD": "NZDUSD=X",
         "AUDUSD": "AUDUSD=X", "USDCHF": "USDCHF=X", "USDCAD": "USDCAD=X",
         "GOLD": "GC=F", "SILVER": "SI=F", "SP500": "^GSPC", "NAS100": "^NDX",
-        "DXY": "DX-Y.NYB", "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "GER40": "^GDAXI"
+        "DXY": "DX-Y.NYB", "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "GER40": "^GDAXI",
+        # Intermarket Drivers
+        "US10Y_YIELD": "^TNX", "US02Y_YIELD": "^IRX", "VIX_VOLATILITY": "^VIX", "WTI_CRUDE": "CL=F"
     }
 
+    logging.info("Batch fetching real-time market prices & bond yields from Yahoo Finance...")
+    symbols = list(ticker_mapping.values())
     price_lines = []
-    logging.info("Fetching real-time market prices from Yahoo Finance...")
 
-    for asset, symbol in ticker_mapping.items():
-        try:
-            t = yf.Ticker(symbol)
-            todays_data = t.history(period="1d")
-            if not todays_data.empty:
-                current_price = todays_data['Close'].iloc[-1]
-                price_lines.append(f"- {asset}: {current_price:.4f}" if current_price < 10 else f"- {asset}: {current_price:.2f}")
-            else:
-                price_lines.append(f"- {asset}: Data unavailable")
-        except Exception as e:
-            logging.warning(f"Could not fetch live price for {asset}: {e}")
-            price_lines.append(f"- {asset}: N/A")
+    try:
+        data = yf.download(tickers=symbols, period="5d", interval="1d", progress=False)
+        
+        for asset, symbol in ticker_mapping.items():
+            try:
+                series = data['Close'][symbol].dropna() if len(symbols) > 1 else data['Close'].dropna()
+                if len(series) >= 2:
+                    current_price = series.iloc[-1]
+                    prev_price = series.iloc[-2]
+                    pct_change = ((current_price - prev_price) / prev_price) * 100
+                    
+                    price_fmt = f"{current_price:.4f}" if current_price < 10 else f"{current_price:.2f}"
+                    change_sign = "+" if pct_change >= 0 else ""
+                    price_lines.append(f"- {asset}: {price_fmt} ({change_sign}{pct_change:.2f}% 24h)")
+                elif len(series) == 1:
+                    current_price = series.iloc[-1]
+                    price_fmt = f"{current_price:.4f}" if current_price < 10 else f"{current_price:.2f}"
+                    price_lines.append(f"- {asset}: {price_fmt}")
+                else:
+                    price_lines.append(f"- {asset}: Data unavailable")
+            except Exception as e:
+                logging.warning(f"Could not extract price for {asset}: {e}")
+                price_lines.append(f"- {asset}: N/A")
 
-    return "\n".join(price_lines)
+        return "\n".join(price_lines)
+    except Exception as e:
+        logging.error(f"Batch price download failed: {e}")
+        return "Market data feed temporarily unavailable."
+
+def fetch_live_macro_headlines() -> str:
+    logging.info("Fetching real-time macro headlines via RSS feed...")
+    rss_url = "https://news.google.com/rss/search?q=forex+central+bank+inflation+fed+ecb+when:1d&hl=en-US&gl=US&ceid=US:en"
+    
+    try:
+        res = requests.get(rss_url, timeout=10)
+        if res.status_code != 200:
+            return "No recent headline feed returned."
+            
+        root = ET.fromstring(res.content)
+        headlines = []
+        for item in root.findall('./channel/item')[:6]:
+            title = item.find('title').text if item.find('title') is not None else ""
+            if title:
+                # Clean news source prefix
+                clean_title = re.sub(r"\s*-\s*[^-]+$", "", title)
+                headlines.append(f"• {clean_title}")
+                
+        return "\n".join(headlines) if headlines else "No major breaking macro headlines found."
+    except Exception as e:
+        logging.warning(f"Could not fetch macro news RSS: {e}")
+        return "Headline feed temporarily offline."
 
 # ---------------------------------------------------------------------------
 # Visual Banner Generator
@@ -251,11 +293,23 @@ def generate_session_banner(mode: str) -> io.BytesIO:
     }
     subtitle = display_titles.get(mode, "MARKET INTELLIGENCE BRIEF")
 
-    ax.text(0.05, 0.70, "APEX INSTITUTIONAL MACRO DESK", fontsize=11, color='#8b949e', fontweight='bold', fontfamily='monospace')
-    ax.text(0.05, 0.40, subtitle, fontsize=22, color='#ffffff', fontweight='bold', fontfamily='sans-serif')
+    # Compute current active market session
+    utc_hour = time.gmtime().tm_hour
+    if 7 <= utc_hour < 12:
+        session_state = "SESSION: LONDON ACTIVE | ASIA CLOSED"
+    elif 12 <= utc_hour < 16:
+        session_state = "SESSION: LONDON / NY OVERLAP (PEAK LIQUIDITY)"
+    elif 16 <= utc_hour < 21:
+        session_state = "SESSION: NEW YORK ACTIVE | LONDON CLOSED"
+    else:
+        session_state = "SESSION: ASIAN PACIFIC / OFF-PEAK HOURS"
+
+    ax.text(0.05, 0.75, "APEX INSTITUTIONAL MACRO DESK", fontsize=11, color='#8b949e', fontweight='bold', fontfamily='monospace')
+    ax.text(0.05, 0.48, subtitle, fontsize=20, color='#ffffff', fontweight='bold', fontfamily='sans-serif')
+    ax.text(0.05, 0.28, session_state, fontsize=8, color='#3fb950', fontweight='bold', fontfamily='monospace')
     
     timestamp_str = time.strftime("%A, %d %b %Y | %H:%M UTC", time.gmtime())
-    ax.text(0.05, 0.15, f"GENERATED: {timestamp_str}", fontsize=9, color='#58a6ff', fontweight='bold', fontfamily='monospace')
+    ax.text(0.05, 0.12, f"GENERATED: {timestamp_str}", fontsize=9, color='#58a6ff', fontweight='bold', fontfamily='monospace')
 
     ax.axis('off')
     
@@ -266,7 +320,93 @@ def generate_session_banner(mode: str) -> io.BytesIO:
     return buf
 
 # ---------------------------------------------------------------------------
-# Helpers & Validation
+# Formatting & Telegram Sanitizers
+# ---------------------------------------------------------------------------
+def sanitize_telegram_markdown(text: str) -> str:
+    # Auto-close unclosed bold or italic tags to prevent Telegram API 400 rejection
+    if text.count("*") % 2 != 0:
+        text += "*"
+    if text.count("_") % 2 != 0:
+        text += "_"
+    return text
+
+def chunk_telegram_text(text: str, max_bytes: int = 3900) -> list[str]:
+    lines = text.split("\n")
+    chunks = []
+    current_chunk = ""
+
+    for line in lines:
+        if len(current_chunk) + len(line) + 1 > max_bytes:
+            chunks.append(current_chunk.strip())
+            current_chunk = line + "\n"
+        else:
+            current_chunk += line + "\n"
+
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks
+
+def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
+    photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    msg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    # 1. Send Visual Banner Image
+    try:
+        files = {'photo': ('banner.png', banner_buf.getvalue(), 'image/png')}
+        photo_res = requests.post(
+            photo_url, 
+            data={'chat_id': TELEGRAM_CHANNEL_ID, 'caption': "📊 *Apex Institutional Intelligence Briefing*", 'parse_mode': 'Markdown'}, 
+            files=files, 
+            timeout=15
+        )
+        if photo_res.status_code != 200:
+            logging.warning(f"Banner upload alert ({photo_res.status_code}): {photo_res.text}")
+    except Exception as e:
+        logging.warning(f"Banner photo dispatch exception: {e}")
+
+    # 2. Sanitize and Send Chunked Text Report
+    sanitized_text = sanitize_telegram_markdown(text)
+    chunks = chunk_telegram_text(sanitized_text)
+
+    success = True
+    for chunk in chunks:
+        payload = {
+            "chat_id": TELEGRAM_CHANNEL_ID,
+            "text": chunk,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        res = requests.post(msg_url, json=payload, timeout=15)
+        
+        # Fallback to plain text if Markdown parsing fails
+        if res.status_code != 200:
+            logging.warning(f"Markdown dispatch failed ({res.status_code}). Attempting plain text fallback...")
+            payload["parse_mode"] = ""
+            res_fallback = requests.post(msg_url, json=payload, timeout=15)
+            if res_fallback.status_code != 200:
+                logging.error(f"Telegram API error: {res_fallback.text}")
+                success = False
+
+    return success
+
+def send_admin_alert(message: str):
+    if not TELEGRAM_ADMIN_CHAT_ID: return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_ADMIN_CHAT_ID, "text": f"⚠️ *SYSTEM ALERT*\n{message}", "parse_mode": "Markdown"}
+    try: requests.post(url, json=payload, timeout=5)
+    except Exception as e: logging.error(f"Admin alert dispatch failed: {e}")
+
+def count_setups(report_text: str) -> int:
+    matches = re.findall(r"(?i)(?:setup|rank|opportunity)\s*#?\d+", report_text)
+    if matches:
+        normalized = [m.lower().replace(" ", "") for m in matches]
+        return len(set(normalized))
+    bullet_matches = re.findall(r"\n\s*(?:\d+\.|\*|\-)\s+\*Setup.*?(?:BUY|SELL|LONG|SHORT)", report_text, re.IGNORECASE)
+    return len(bullet_matches)
+
+# ---------------------------------------------------------------------------
+# Report Generation & Logic Pipeline
 # ---------------------------------------------------------------------------
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Forex Fundamental Analyser")
@@ -298,66 +438,17 @@ def validate_environment():
         logging.error(f"Missing required environment variable(s): {', '.join(missing)}")
         sys.exit(1)
 
-def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
-    photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-    msg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    # 1. Send Visual Banner Image
-    try:
-        files = {'photo': ('banner.png', banner_buf.getvalue(), 'image/png')}
-        photo_res = requests.post(photo_url, data={'chat_id': TELEGRAM_CHANNEL_ID, 'caption': "📊 *Apex Institutional Intelligence Briefing*"}, files=files, timeout=15)
-        if photo_res.status_code != 200:
-            logging.warning(f"Banner upload alert ({photo_res.status_code}): {photo_res.text}")
-    except Exception as e:
-        logging.warning(f"Banner photo dispatch exception: {e}")
-
-    # 2. Send Chunked Text Report
-    max_length = 4000
-    chunks = []
-    while len(text) > max_length:
-        split_idx = text.rfind("\n", 0, max_length)
-        if split_idx == -1: split_idx = max_length
-        chunks.append(text[:split_idx])
-        text = text[split_idx:].lstrip()
-    chunks.append(text)
-
-    success = True
-    for chunk in chunks:
-        payload = {
-            "chat_id": TELEGRAM_CHANNEL_ID,
-            "text": chunk,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True
-        }
-        res = requests.post(msg_url, json=payload)
-        if res.status_code != 200:
-            payload["parse_mode"] = ""
-            res_fallback = requests.post(msg_url, json=payload)
-            if res_fallback.status_code != 200:
-                logging.error(f"Telegram API error: {res_fallback.text}")
-                success = False
-    return success
-
-def send_admin_alert(message: str):
-    if not TELEGRAM_ADMIN_CHAT_ID: return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_ADMIN_CHAT_ID, "text": f"⚠️ *SYSTEM ALERT*\n{message}", "parse_mode": "Markdown"}
-    try: requests.post(url, json=payload, timeout=5)
-    except Exception as e: logging.error(f"Admin alert dispatch failed: {e}")
-
-def count_setups(report_text: str) -> int:
-    matches = re.findall(r"(?i)(?:setup|rank|opportunity)\s*#?\d+", report_text)
-    if matches: return len(set(matches))
-    bullet_matches = re.findall(r"\n\s*(?:\d+\.|\*|\-)\s+\*Setup.*?(?:BUY|SELL|LONG|SHORT)", report_text, re.IGNORECASE)
-    return len(bullet_matches)
-
 def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 5) -> str:
     prompt = PROMPT_TEMPLATES[mode]
+    
     live_prices = fetch_live_market_data()
-    prompt += f"\n\nLIVE MARKET PRICE FEED (MANDATORY REFERENCE FOR ALL PRICES):\n{live_prices}"
+    live_headlines = fetch_live_macro_headlines()
+
+    prompt += f"\n\nLIVE MARKET PRICE & YIELD FEED (MANDATORY REFERENCE FOR ALL PRICES):\n{live_prices}"
+    prompt += f"\n\nBREAKING MACRO HEADLINES (24H):\n{live_headlines}"
 
     if custom_feed:
-        prompt += f"\n\nBREAKING EVENT FEED:\n{custom_feed}"
+        prompt += f"\n\nCUSTOM BREAKING EVENT FEED:\n{custom_feed}"
 
     report_text = ""
     setup_count = 0
