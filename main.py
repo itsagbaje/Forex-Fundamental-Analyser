@@ -73,7 +73,7 @@ CORE ANALYTICAL PRINCIPLES:
    - IF NO MATERIAL CHANGE HAS OCCURRED: Start your entire response with `[NO_MATERIAL_CHANGE]` followed by a brief 1-2 sentence explanation of why the current thesis holds. Do NOT generate a full report.
    - IF A MATERIAL CHANGE HAS OCCURRED: Start your response with `[MATERIAL_CHANGE]` and proceed with the full Intraday Update Report format.
 3. WATCHLIST DIRECTIONAL BIAS: Provide an explicit directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for EVERY asset on the watchlist.
-4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): Generate at least 5 ranked setups. You MUST use the exact live market prices provided in the prompt context. Each setup must follow this exact format:
+4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): For London, NY, and Intraday modes, generate at least 5 ranked setups. You MUST use the exact live market prices provided in the prompt context. Each setup must follow this exact format:
 
    *Setup #X: [ASSET] - [BUY / SELL]*
    • *Macro Catalyst:* <Context>
@@ -193,19 +193,30 @@ REQUIRED VISUAL LAYOUT:
 ───────────────────────────
 
 💵 *DEDICATED DXY & CROSS-ASSET RECAP*
-In-depth review of DXY performance across Asian, London, and NY sessions alongside Treasury yield behavior.
+In-depth review of DXY closing performance across Asian, London, and NY sessions alongside Treasury yield behavior and intermarket flows.
 
 ───────────────────────────
 📊 *DAILY CLOSING BIAS MATRIX*
-Closing price action and directional bias for ALL 14 assets: {', '.join(WATCHLIST)}.
+Closing price action and directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL 14 assets:
+{', '.join(WATCHLIST)}.
 
 ───────────────────────────
-🔄 *DAILY THESIS REVIEW & DECOUPLING SUMMARY*
-Summary of key market drivers, unexpected decoupling events, and structural trend shifts observed today.
+🎯 *SETUP VERDICT SCOREBOARD (SESSION EXECUTION AUDIT)*
+Review execution and outcomes for today's London and New York session setups:
+• *London Session Setups:* [Evaluate execution quality, assign Execution Grade (A to F), and state R:R result]
+• *New York Session Setups:* [Evaluate execution quality, assign Execution Grade (A to F), and state R:R result]
 
 ───────────────────────────
-📅 *TOMORROW'S CALENDAR & PRELIMINARY OUTLOOK*
-Key high-impact events for upcoming sessions and early directional context.
+🔄 *INTRADAY DEVELOPMENTS & NARRATIVE SHIFT*
+Summary of key market drivers, unexpected decoupling events, HTF structural shifts (CHoCH/BOS), and unmitigated Fair Value Gaps (FVGs) left open for tomorrow.
+
+───────────────────────────
+📅 *TOMORROW'S CALENDAR & OVERNIGHT WATCHLIST*
+Key high-impact events for upcoming sessions, critical daily pivot levels, and preliminary directional outlook.
+
+───────────────────────────
+💡 *INSTITUTIONAL EDGE & PROCESS TAKEAWAY*
+Single highest-leverage execution or risk discipline lesson derived from today's price action.
 """
 }
 
