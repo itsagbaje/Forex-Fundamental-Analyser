@@ -1,13 +1,11 @@
 name: Automated Forex Fundamental Analysis
 
 on:
-  schedule:
-    # London Outlook: 06:22 UTC
-    - cron: '22 6 * * 1-5'
-    # New York Outlook: 12:22 UTC
-    - cron: '22 12 * * 1-5'
-    # EOD Recap: 20:22 UTC
-    - cron: '22 20 * * 1-5'
+  # Listens for real-time external API pings
+  repository_dispatch:
+    types: [trigger-market-analysis]
+
+  # Allows manual runs from the GitHub UI for testing
   workflow_dispatch:
     inputs:
       mode:
@@ -47,20 +45,12 @@ jobs:
       - name: Determine Analysis Mode
         id: select_mode
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            echo "RUN_MODE=${{ github.event.client_payload.mode }}" >> $GITHUB_ENV
+            echo "CUSTOM_FEED=${{ github.event.client_payload.custom_feed }}" >> $GITHUB_ENV
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "RUN_MODE=${{ github.event.inputs.mode }}" >> $GITHUB_ENV
             echo "CUSTOM_FEED=${{ github.event.inputs.custom_feed }}" >> $GITHUB_ENV
-          else
-            HOUR=$(date -u +%H)
-            if [ "$HOUR" -eq "06" ] || [ "$HOUR" -eq "07" ]; then
-              echo "RUN_MODE=LONDON" >> $GITHUB_ENV
-            elif [ "$HOUR" -eq "12" ] || [ "$HOUR" -eq "13" ]; then
-              echo "RUN_MODE=NEW_YORK" >> $GITHUB_ENV
-            elif [ "$HOUR" -eq "20" ] || [ "$HOUR" -eq "21" ]; then
-              echo "RUN_MODE=EOD" >> $GITHUB_ENV
-            else
-              echo "RUN_MODE=INTRADAY_UPDATE" >> $GITHUB_ENV
-            fi
           fi
 
       - name: Execute Fundamental Analyser
@@ -76,4 +66,3 @@ jobs:
           else
             python main.py --mode ${{ env.RUN_MODE }}
           fi
-          
