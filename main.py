@@ -104,11 +104,22 @@ For every pair on the watchlist, calculate a Composite Edge Score from -10 to +1
    • +1: Both underlying USD major legs push in the same direction.
    • 0: USD major legs diverge (Do NOT eliminate the setup; assign 0 bonus points).
 
-SCORE CONVICTION THRESHOLDS:
-• Score >= +6: HIGH-CONVICTION BULLISH (Generate Full Ranked Setup)
-• Score <= -6: HIGH-CONVICTION BEARISH (Generate Full Ranked Setup)
+SCORE CONVICTION THRESHOLDS & MANDATORY OUTPUTS:
+• You MUST evaluate the 38 assets on the watchlist and generate AT LEAST 10 RANKED HIGH-CONVICTION TRADE SETUPS clearly labeled (*Setup #1* through *Setup #10*) for session reports.
+• Score >= +6: HIGH-CONVICTION BULLISH (Eligible for Ranked Setup)
+• Score <= -6: HIGH-CONVICTION BEARISH (Eligible for Ranked Setup)
 • Score +3 to +5 / -3 to -5: MODERATE CONVICTION (Include in Directional Matrix only)
 • Score -2 to +2: NO EDGE / NEUTRAL (Exclude from setups)
+
+SET UP FORMAT (MANDATORY):
+*Setup #X: [ASSET] - [BUY / SELL]*
+• *Macro Catalyst:* <Context>
+• *DXY / Correlation Stance:* <Context>
+• *COT & Retail Sentiment:* <Context>
+• *Entry / Retest Zone:* <Price level based on live feed>
+• *Target Zone:* <Price level>
+• *Invalidation Level:* <Price level>
+• *Timing Window:* <Session timing>
 """
 
 PROMPT_TEMPLATES = {
@@ -134,8 +145,8 @@ Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and 1-sen
 Analysis of Asian market open liquidity, PBOC fixing, and Sydney/Tokyo price discovery.
 
 ───────────────────────────
-🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-Provide AT LEAST 5 ranked setups matching the live price data feed (Focusing on JPY, AUD, NZD, and USD majors).
+🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #10 MINIMUM)*
+Provide AT LEAST 10 ranked setups matching the live price data feed across FX majors, crosses, and commodities.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES (ASIAN SESSION EVENTS)*
@@ -164,8 +175,8 @@ Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and 1-sen
 Prevailing macro narrative and adjustments from overnight Asian flows.
 
 ───────────────────────────
-🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-Provide AT LEAST 5 ranked setups matching the live price data feed.
+🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #10 MINIMUM)*
+Provide AT LEAST 10 ranked setups matching the live price data feed.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES (HIGH IMPACT EVENTS TODAY)*
@@ -194,8 +205,8 @@ Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL W
 Compare London price action against the morning thesis. Explicitly state: What changed during London, why it changed, and how it impacts New York flows.
 
 ───────────────────────────
-🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-AT LEAST 5 ranked setups tailored for NY session volatility using live asset pricing.
+🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #10 MINIMUM)*
+AT LEAST 10 ranked setups tailored for NY session volatility using live asset pricing.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES (HIGH IMPACT EVENTS TODAY)*
@@ -231,8 +242,8 @@ Shift in DXY structure, FRED bond yields, and interest rate expectations.
 Post-event bias for ALL WATCHLIST ASSETS: {', '.join(WATCHLIST)}.
 
 ───────────────────────────
-🎯 *UPDATED HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
-AT LEAST 5 updated setups reflecting the new thesis using live market prices.
+🎯 *UPDATED HIGH-CONVICTION SETUPS (RANKED #1 TO #10 MINIMUM)*
+AT LEAST 10 updated setups reflecting the new thesis using live market prices.
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES*
@@ -719,11 +730,11 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
                 setup_count = count_setups(report_text)
                 logging.info(f"Detected {setup_count} trade setup(s) in output.")
 
-                if setup_count >= 5:
+                if setup_count >= 10:
                     return report_text
 
-                logging.warning(f"Setup count validation failed ({setup_count}/5 required). Retrying prompt...")
-                prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 5 ranked, high-conviction trade setups clearly labeled (*Setup #1*, *Setup #2*, *Setup #3*, *Setup #4*, *Setup #5*) using the exact live prices provided."
+                logging.warning(f"Setup count validation failed ({setup_count}/10 required). Retrying prompt...")
+                prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 10 ranked, high-conviction trade setups clearly labeled (*Setup #1*, *Setup #2*, ..., *Setup #10*) using the exact live prices provided."
 
             except Exception as e:
                 error_str = str(e)
@@ -744,7 +755,7 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
                     else:
                         break
 
-        if report_text and setup_count >= 5:
+        if report_text and setup_count >= 10:
             return report_text
 
     logging.warning("All fallback models exhausted. Dispatching best available output.")
