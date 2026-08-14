@@ -225,47 +225,47 @@ Single highest-leverage execution or risk discipline lesson derived from today's
 # ---------------------------------------------------------------------------
 def fetch_live_market_data() -> str:
     ticker_mapping = {
-        # Core Watchlist
+        # Core Watchlist (Spot FX & Index Tickers)
         "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "NZDUSD": "NZDUSD=X",
         "AUDUSD": "AUDUSD=X", "USDCHF": "USDCHF=X", "USDCAD": "USDCAD=X",
-        "GOLD": "GC=F", "SILVER": "SI=F", "SP500": "^GSPC", "NAS100": "^NDX",
+        "GOLD": "XAUUSD=X", "SILVER": "XAGUSD=X", "SP500": "^GSPC", "NAS100": "^NDX",
         "DXY": "DX-Y.NYB", "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "GER40": "^GDAXI",
         # Intermarket Drivers
         "US10Y_YIELD": "^TNX", "US02Y_YIELD": "^IRX", "VIX_VOLATILITY": "^VIX", "WTI_CRUDE": "CL=F"
     }
 
-    logging.info("Batch fetching real-time market prices & bond yields from Yahoo Finance...")
-    symbols = list(ticker_mapping.values())
+    logging.info("Fetching real-time spot market prices via fast_info live feed...")
     price_lines = []
 
-    try:
-        data = yf.download(tickers=symbols, period="5d", interval="1d", progress=False)
-        
-        for asset, symbol in ticker_mapping.items():
-            try:
-                series = data['Close'][symbol].dropna() if len(symbols) > 1 else data['Close'].dropna()
-                if len(series) >= 2:
-                    current_price = series.iloc[-1]
-                    prev_price = series.iloc[-2]
-                    pct_change = ((current_price - prev_price) / prev_price) * 100
-                    
-                    price_fmt = f"{current_price:.4f}" if current_price < 10 else f"{current_price:.2f}"
-                    change_sign = "+" if pct_change >= 0 else ""
-                    price_lines.append(f"- {asset}: {price_fmt} ({change_sign}{pct_change:.2f}% 24h)")
-                elif len(series) == 1:
-                    current_price = series.iloc[-1]
-                    price_fmt = f"{current_price:.4f}" if current_price < 10 else f"{current_price:.2f}"
-                    price_lines.append(f"- {asset}: {price_fmt}")
-                else:
-                    price_lines.append(f"- {asset}: Data unavailable")
-            except Exception as e:
-                logging.warning(f"Could not extract price for {asset}: {e}")
-                price_lines.append(f"- {asset}: N/A")
+    for asset, symbol in ticker_mapping.items():
+        try:
+            ticker = yf.Ticker(symbol)
+            
+            # Fetch live real-time price and previous close from ticker fast_info
+            last_price = ticker.fast_info.get("lastPrice") or ticker.fast_info.get("regularMarketPrice")
+            prev_close = ticker.fast_info.get("previousClose") or ticker.fast_info.get("regularMarketPreviousClose")
 
-        return "\n".join(price_lines)
-    except Exception as e:
-        logging.error(f"Batch price download failed: {e}")
-        return "Market data feed temporarily unavailable."
+            # Fallback to intraday snapshot if fast_info is unavailable
+            if last_price is None or prev_close is None:
+                hist = ticker.history(period="2d", interval="1m")
+                if not hist.empty:
+                    last_price = hist['Close'].iloc[-1]
+                    hist_daily = ticker.history(period="5d", interval="1d")
+                    prev_close = hist_daily['Close'].iloc[-2] if len(hist_daily) >= 2 else last_price
+
+            if last_price is not None and prev_close is not None:
+                pct_change = ((last_price - prev_close) / prev_close) * 100
+                price_fmt = f"{last_price:.4f}" if last_price < 10 else f"{last_price:.2f}"
+                change_sign = "+" if pct_change >= 0 else ""
+                price_lines.append(f"- {asset}: {price_fmt} ({change_sign}{pct_change:.2f}% 24h)")
+            else:
+                price_lines.append(f"- {asset}: Data unavailable")
+
+        except Exception as e:
+            logging.warning(f"Could not extract live price for {asset}: {e}")
+            price_lines.append(f"- {asset}: N/A")
+
+    return "\n".join(price_lines)
 
 def fetch_live_macro_headlines() -> str:
     logging.info("Fetching real-time macro headlines via RSS feed...")
@@ -454,187 +454,4 @@ def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
             logging.warning(f"Markdown dispatch failed ({res.status_code}). Attempting plain text fallback...")
             payload["parse_mode"] = ""
             res_fallback = requests.post(msg_url, json=payload, timeout=15)
-            if res_fallback.status_code != 200:
-                logging.error(f"Telegram API error: {res_fallback.text}")
-                success = False
-
-    return success
-
-def send_admin_alert(message: str):
-    if not TELEGRAM_ADMIN_CHAT_ID: return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_ADMIN_CHAT_ID, "text": f"⚠️ *SYSTEM ALERT*\n{message}", "parse_mode": "Markdown"}
-    try: requests.post(url, json=payload, timeout=5)
-    except Exception as e: logging.error(f"Admin alert dispatch failed: {e}")
-
-def count_setups(report_text: str) -> int:
-    matches = re.findall(r"(?i)(?:setup|rank|opportunity)\s*#?\d+", report_text)
-    if matches:
-        normalized = [m.lower().replace(" ", "") for m in matches]
-        return len(set(normalized))
-    bullet_matches = re.findall(r"\n\s*(?:\d+\.|\*|\-)\s+\*Setup.*?(?:BUY|SELL|LONG|SHORT)", report_text, re.IGNORECASE)
-    return len(bullet_matches)
-
-# ---------------------------------------------------------------------------
-# Report Generation & Logic Pipeline
-# ---------------------------------------------------------------------------
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="Forex Fundamental Analyser")
-    parser.add_argument("positional_mode", nargs="?", default=None)
-    parser.add_argument("--mode", type=str, default=None)
-    parser.add_argument("--feed", type=str, default=None)
-    args, _ = parser.parse_known_args()
-
-    raw_mode = args.mode or args.positional_mode or "LONDON_OUTLOOK"
-    cleaned = raw_mode.strip().upper()
-
-    mapping = {
-        "LONDON": "LONDON_OUTLOOK", "LONDON_OUTLOOK": "LONDON_OUTLOOK",
-        "NEW_YORK": "NEW_YORK_OUTLOOK", "NEW_YORK_OUTLOOK": "NEW_YORK_OUTLOOK", "NY": "NEW_YORK_OUTLOOK",
-        "INTRADAY": "INTRADAY_UPDATE", "INTRADAY_UPDATE": "INTRADAY_UPDATE",
-        "POST_NEWS": "INTRADAY_UPDATE", "POST_NEWS_UPDATE": "INTRADAY_UPDATE",
-        "EOD": "EOD_RECAP", "EOD_RECAP": "EOD_RECAP"
-    }
-
-    return mapping.get(cleaned, "LONDON_OUTLOOK"), args.feed
-
-def validate_environment():
-    missing = []
-    if not GEMINI_API_KEY: missing.append("GEMINI_API_KEY")
-    if not TELEGRAM_BOT_TOKEN: missing.append("TELEGRAM_BOT_TOKEN")
-    if not TELEGRAM_CHANNEL_ID: missing.append("TELEGRAM_CHANNEL_ID")
-
-    if missing:
-        logging.error(f"Missing required environment variable(s): {', '.join(missing)}")
-        sys.exit(1)
-
-def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 3) -> str:
-    prompt = PROMPT_TEMPLATES[mode]
-    
-    live_prices = fetch_live_market_data()
-    live_headlines = fetch_live_macro_headlines()
-    economic_calendar = fetch_economic_calendar()
-
-    prompt += f"\n\nLIVE MARKET PRICE & YIELD FEED (MANDATORY REFERENCE FOR ALL PRICES):\n{live_prices}"
-    prompt += f"\n\nSTRUCTURED ECONOMIC CALENDAR (ACTUAL VS FORECAST):\n{economic_calendar}"
-    prompt += f"\n\nBREAKING MACRO HEADLINES (24H):\n{live_headlines}"
-
-    if custom_feed:
-        prompt += f"\n\nCUSTOM BREAKING EVENT FEED:\n{custom_feed}"
-
-    # Model Fallback Chain to protect against Google server capacity spikes (503 UNAVAILABLE)
-    model_fallback_chain = [
-        PREFERRED_MODEL,
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-2.5-flash"
-    ]
-
-    report_text = ""
-    setup_count = 0
-
-    for model_name in model_fallback_chain:
-        logging.info(f"Attempting report generation with model target: '{model_name}'...")
-        
-        for attempt in range(1, max_retries + 1):
-            logging.info(f"Calling Gemini ({model_name}) for mode '{mode}' (Attempt {attempt}/{max_retries})...")
-
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTIONS,
-                        temperature=0.3,
-                    )
-                )
-                report_text = (response.text or "").strip()
-                
-                # Check for Intraday No Material Change flag
-                if "[NO_MATERIAL_CHANGE]" in report_text:
-                    return "[NO_MATERIAL_CHANGE]"
-
-                if not report_text.endswith(MANDATORY_DISCLAIMER.strip()):
-                    report_text += f"\n\n{MANDATORY_DISCLAIMER.strip()}"
-
-                if mode == "EOD_RECAP":
-                    return report_text
-
-                setup_count = count_setups(report_text)
-                logging.info(f"Detected {setup_count} trade setup(s) in output.")
-
-                if setup_count >= 5:
-                    return report_text
-
-                logging.warning(f"Setup count validation failed ({setup_count}/5 required). Retrying prompt...")
-                prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 5 ranked, high-conviction trade setups clearly labeled (*Setup #1*, *Setup #2*, *Setup #3*, *Setup #4*, *Setup #5*) using the exact live prices provided."
-
-            except Exception as e:
-                error_str = str(e)
-                logging.error(f"API Error with model '{model_name}': {error_str}")
-                
-                # Handle Google server-side capacity spikes (503 UNAVAILABLE)
-                if "503" in error_str or "UNAVAILABLE" in error_str:
-                    if attempt < max_retries:
-                        sleep_duration = 4 * attempt
-                        logging.info(f"503 High Demand detected on Google servers. Waiting {sleep_duration}s...")
-                        time.sleep(sleep_duration)
-                    else:
-                        logging.warning(f"Model '{model_name}' exhausted retries due to 503 capacity limits. Switching to next model in fallback chain...")
-                        break
-                else:
-                    if attempt < max_retries:
-                        time.sleep(3)
-                    else:
-                        break
-
-        if report_text and setup_count >= 5:
-            return report_text
-
-    logging.warning("All fallback models exhausted. Dispatching best available output.")
-    send_admin_alert(f"Mode `{mode}` encountered Google server capacity issues across all fallback options.")
-    return report_text
-
-# ---------------------------------------------------------------------------
-# Main Execution
-# ---------------------------------------------------------------------------
-def main():
-    validate_environment()
-    mode, custom_feed = parse_arguments()
-
-    logging.info(f"Starting pipeline | Mode: {mode} | Primary Model: {PREFERRED_MODEL}")
-
-    client = genai.Client(api_key=GEMINI_API_KEY)
-
-    try:
-        report = generate_report_with_retry(client=client, mode=mode, custom_feed=custom_feed)
-
-        # Gatekeeper check for suppressed intraday updates
-        if report == "[NO_MATERIAL_CHANGE]":
-            logging.info("Intraday reassessment completed: No material shift in macro thesis or setups. Telegram update suppressed.")
-            sys.exit(0)
-
-        # Clean tag if present
-        report = report.replace("[MATERIAL_CHANGE]", "").strip()
-
-        # Log setups to CSV file
-        log_setups_to_csv(report, mode)
-
-        logging.info("Report generation complete. Generating visual session banner...")
-        banner_buf = generate_session_banner(mode)
-
-        logging.info("Dispatching visual banner and text report to Telegram...")
-        if send_telegram_media_and_message(report, banner_buf):
-            logging.info("Successfully published session intelligence package to Telegram.")
-        else:
-            logging.error("Failed to post report package to Telegram.")
-            sys.exit(1)
-
-    except Exception as e:
-        error_msg = f"Pipeline execution failed for mode `{mode}`:\n`{str(e)}`"
-        logging.error(error_msg, exc_info=True)
-        send_admin_alert(error_msg)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+            if res_fa
