@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import io
+import csv
 import time
 import logging
 import argparse
@@ -45,6 +46,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
 
 MANDATORY_DISCLAIMER = """───────────────────────────
 ⚠️ *RISK DISCLAIMER & SUBSCRIBER NOTICE*
@@ -208,7 +210,7 @@ Key high-impact events for upcoming sessions and early directional context.
 }
 
 # ---------------------------------------------------------------------------
-# Market Data & News Fetchers
+# Market Data, Calendar & News Fetchers
 # ---------------------------------------------------------------------------
 def fetch_live_market_data() -> str:
     ticker_mapping = {
@@ -268,7 +270,6 @@ def fetch_live_macro_headlines() -> str:
         for item in root.findall('./channel/item')[:6]:
             title = item.find('title').text if item.find('title') is not None else ""
             if title:
-                # Clean news source prefix
                 clean_title = re.sub(r"\s*-\s*[^-]+$", "", title)
                 headlines.append(f"• {clean_title}")
                 
@@ -276,6 +277,40 @@ def fetch_live_macro_headlines() -> str:
     except Exception as e:
         logging.warning(f"Could not fetch macro news RSS: {e}")
         return "Headline feed temporarily offline."
+
+def fetch_economic_calendar() -> str:
+    if not FINNHUB_API_KEY:
+        return "Finnhub API key not configured. Skipping structured economic calendar feed."
+
+    logging.info("Fetching economic calendar data from Finnhub API...")
+    today_str = time.strftime("%Y-%m-%d", time.gmtime())
+    url = f"https://finnhub.io/api/v1/calendar/economic?from={today_str}&to={today_str}&token={FINNHUB_API_KEY}"
+
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code != 200:
+            return "Economic calendar API returned non-200 status code."
+        
+        events = res.json().get("economicCalendar", [])
+        if not events:
+            return "No economic calendar releases found for today."
+
+        # Filter for medium and high impact releases
+        filtered_events = [e for e in events if str(e.get("impact", "")).lower() in ["high", "medium", "3", "2"]]
+        
+        lines = []
+        for e in filtered_events[:10]:
+            event_name = e.get("event", "Economic Release")
+            country = e.get("country", "GLOBAL")
+            actual = e.get("actual", "Pending")
+            estimate = e.get("estimate", "N/A")
+            prev = e.get("prev", "N/A")
+            lines.append(f"• [{country}] {event_name} | Actual: {actual} | Forecast: {estimate} | Previous: {prev}")
+
+        return "\n".join(lines) if lines else "No high/medium impact calendar releases scheduled today."
+    except Exception as e:
+        logging.warning(f"Could not fetch economic calendar: {e}")
+        return "Economic calendar fetch failed."
 
 # ---------------------------------------------------------------------------
 # Visual Banner Generator
@@ -320,7 +355,7 @@ def generate_session_banner(mode: str) -> io.BytesIO:
     return buf
 
 # ---------------------------------------------------------------------------
-# Formatting & Telegram Sanitizers
+# Formatting, Logging & Telegram Helpers
 # ---------------------------------------------------------------------------
 def sanitize_telegram_markdown(text: str) -> str:
     # Auto-close unclosed bold or italic tags to prevent Telegram API 400 rejection
@@ -346,6 +381,31 @@ def chunk_telegram_text(text: str, max_bytes: int = 3900) -> list[str]:
         chunks.append(current_chunk.strip())
 
     return chunks
+
+def log_setups_to_csv(report_text: str, mode: str):
+    file_path = "setups_log.csv"
+    file_exists = os.path.isfile(file_path)
+    timestamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+    
+    # Extract setup titles matching Setup #1, Setup #2 format
+    setup_matches = re.findall(r"\*Setup #\d+:.*?\*", report_text)
+    
+    if not setup_matches:
+        logging.info("No formatted trade setups detected to write into CSV log.")
+        return
+
+    try:
+        with open(file_path, mode="a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["Timestamp", "Session Mode", "Setup Details"])
+            
+            for setup in setup_matches:
+                clean_title = setup.replace("*", "").strip()
+                writer.writerow([timestamp, mode, clean_title])
+        logging.info(f"Successfully recorded {len(setup_matches)} setup(s) into {file_path}")
+    except Exception as e:
+        logging.warning(f"Could not log setups to CSV file: {e}")
 
 def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
     photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
@@ -443,8 +503,10 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
     
     live_prices = fetch_live_market_data()
     live_headlines = fetch_live_macro_headlines()
+    economic_calendar = fetch_economic_calendar()
 
     prompt += f"\n\nLIVE MARKET PRICE & YIELD FEED (MANDATORY REFERENCE FOR ALL PRICES):\n{live_prices}"
+    prompt += f"\n\nSTRUCTURED ECONOMIC CALENDAR (ACTUAL VS FORECAST):\n{economic_calendar}"
     prompt += f"\n\nBREAKING MACRO HEADLINES (24H):\n{live_headlines}"
 
     if custom_feed:
@@ -520,6 +582,9 @@ def main():
 
         # Clean tag if present
         report = report.replace("[MATERIAL_CHANGE]", "").strip()
+
+        # Log setups to CSV file
+        log_setups_to_csv(report, mode)
 
         logging.info("Report generation complete. Generating visual session banner...")
         banner_buf = generate_session_banner(mode)
