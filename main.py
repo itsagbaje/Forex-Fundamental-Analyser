@@ -37,8 +37,16 @@ logging.basicConfig(
 )
 
 WATCHLIST = [
-    "EURUSD", "GBPUSD", "NZDUSD", "AUDUSD", "USDCHF", "USDCAD",
-    "GOLD", "SILVER", "SP500", "NAS100", "DXY", "BTCUSDT", "ETHUSDT", "GER40"
+    # 7 Major FX Pairs
+    "EURUSD", "GBPUSD", "NZDUSD", "AUDUSD", "USDCHF", "USDCAD", "USDJPY",
+    # 21 Cross FX Pairs
+    "EURGBP", "EURAUD", "EURNZD", "EURCAD", "EURCHF", "EURJPY",
+    "GBPAUD", "GBPNZD", "GBPCAD", "GBPCHF", "GBPJPY",
+    "AUDNZD", "AUDCAD", "AUDCHF", "AUDJPY",
+    "NZDCAD", "NZDCHF", "NZDJPY",
+    "CADCHF", "CADJPY", "CHFJPY",
+    # Intermarket, Commodities & Equity Indices
+    "GOLD", "SILVER", "COPPER", "SP500", "NAS100", "GER40", "JP225", "BTCUSDT", "ETHUSDT", "DXY"
 ]
 
 PREFERRED_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
@@ -47,6 +55,7 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
+FRED_API_KEY = os.getenv("FRED_API_KEY", "d9cca9a169f732432e312ad7efcc4fae")
 
 MANDATORY_DISCLAIMER = """───────────────────────────
 ⚠️ *RISK DISCLAIMER & SUBSCRIBER NOTICE*
@@ -56,7 +65,7 @@ _The setups and directional biases provided above are analytical insights for ed
 # System Instructions & Telegram Formatting Rules
 # ---------------------------------------------------------------------------
 SYSTEM_INSTRUCTIONS = f"""
-You are a Lead Institutional Macro & Forex Fundamental Analyst.
+You are a Lead Institutional Macro & Forex Fundamental Analyst operating the Apex Macro Desk decision engine.
 You analyze global financial markets across this complete watchlist:
 {', '.join(WATCHLIST)}.
 
@@ -67,25 +76,72 @@ TELEGRAM VISUAL FORMATTING RULES (CRITICAL):
 4. Use `•` bullet points with bold field names for structured data (e.g., `• *Macro Catalyst:* CPI beats consensus`).
 5. Keep paragraphs short (2-3 sentences max) with clean line breaks for effortless mobile reading.
 
-CORE ANALYTICAL PRINCIPLES:
-1. DEDICATED DXY ANCHOR: DXY must have its own dedicated section as the primary reference for USD pairs. However, NEVER treat it as a mechanical inverse indicator. Account for regional currency relative strength/weakness, Treasury yield momentum, and intermarket flows.
-2. INTRADAY MATERIAL CHANGE GATEKEEPER: When evaluating intraday market updates or news events, FIRST assess if there is a genuine material shift in DXY bias, asset biases, or setups.
-   - IF NO MATERIAL CHANGE HAS OCCURRED: Start your entire response with `[NO_MATERIAL_CHANGE]` followed by a brief 1-2 sentence explanation of why the current thesis holds. Do NOT generate a full report.
-   - IF A MATERIAL CHANGE HAS OCCURRED: Start your response with `[MATERIAL_CHANGE]` and proceed with the full Intraday Update Report format.
-3. WATCHLIST DIRECTIONAL BIAS: Provide an explicit directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for EVERY asset on the watchlist.
-4. RANKED HIGH-CONVICTION SETUPS (MINIMUM 5): For London, NY, and Intraday modes, generate at least 5 ranked setups. You MUST use the exact live market prices provided in the prompt context. Each setup must follow this exact format:
+INSTITUTIONAL WEIGHTED SCORECARD (MANDATORY EVALUATION ENGINE):
+For every pair on the watchlist, calculate a Composite Edge Score from -10 to +10 by evaluating these 6 weighted factors:
 
-   *Setup #X: [ASSET] - [BUY / SELL]*
-   • *Macro Catalyst:* <Context>
-   • *DXY / Correlation Stance:* <Context>
-   • *COT & Retail Sentiment:* <Context>
-   • *Entry / Retest Zone:* <Price level based on live feed>
-   • *Target Zone:* <Price level>
-   • *Invalidation Level:* <Price level>
-   • *Timing Window:* <Session timing>
+1. Yield Differential Momentum (Weight: ±2 Points):
+   • +2: Base currency bond yields outpace Quote currency yields over 24h.
+   • -2: Quote currency bond yields outpace Base currency yields over 24h.
+
+2. DXY / Relative Strength Divergence (Weight: ±1 Point):
+   • +1: Asset rises while DXY is strong (Class-A Relative Strength).
+   • -1: Asset falls while DXY is weak (Class-A Relative Weakness).
+
+3. Intermarket Risk Regime Alignment (Weight: ±1 Point):
+   • +1: Copper/Gold ratio rising + SP500/JP225 up -> Aligned with Long Growth currencies (AUD, NZD, CAD).
+   • -1: Copper/Gold ratio falling + VIX rising -> Aligned with Safe Havens (JPY, CHF, USD).
+
+4. Institutional COT Positioning Hierarchy (Weight: ±3 / ±2 / ±1 Points):
+   • ±3: Asset Managers heavily net positioning alignment.
+   • ±2: Leveraged Funds net positioning alignment.
+   • ±1: Non-Commercial net positioning alignment.
+
+5. Retail Sentiment Contrarian Flag (Weight: ±1 Point):
+   • +1: Retail sentiment is heavily short (>70% short) -> Bullish contrarian bias.
+   • -1: Retail sentiment is heavily long (>70% long) -> Bearish contrarian bias.
+
+6. Triangular Leg Agreement Modifier (Weight: ±1 Point):
+   • +1: Both underlying USD major legs push in the same direction.
+   • 0: USD major legs diverge (Do NOT eliminate the setup; assign 0 bonus points).
+
+SCORE CONVICTION THRESHOLDS:
+• Score >= +6: HIGH-CONVICTION BULLISH (Generate Full Ranked Setup)
+• Score <= -6: HIGH-CONVICTION BEARISH (Generate Full Ranked Setup)
+• Score +3 to +5 / -3 to -5: MODERATE CONVICTION (Include in Directional Matrix only)
+• Score -2 to +2: NO EDGE / NEUTRAL (Exclude from setups)
 """
 
 PROMPT_TEMPLATES = {
+    "ASIAN_OUTLOOK": f"""
+Generate the **ASIAN & PACIFIC SESSION FUNDAMENTAL OUTLOOK** for Telegram.
+Watchlist: {', '.join(WATCHLIST)}
+
+REQUIRED VISUAL LAYOUT:
+
+🌏 *ASIAN & PACIFIC SESSION FUNDAMENTAL OUTLOOK*
+───────────────────────────
+
+💵 *DEDICATED DXY & YEN MACRO ANALYSIS*
+Deep dive into DXY structure, Bank of Japan policy stance, Japanese Yields/JP225 correlation, and PBOC liquidity injections entering Asian trading hours.
+
+───────────────────────────
+📊 *COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX*
+Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and 1-sentence macro driver for ALL WATCHLIST ASSETS:
+{', '.join(WATCHLIST)}.
+
+───────────────────────────
+🔄 *OVERNIGHT FLOWS & SYDNEY/TOKYO LIQUIDITY SWEEPS*
+Analysis of Asian market open liquidity, PBOC fixing, and Sydney/Tokyo price discovery.
+
+───────────────────────────
+🎯 *TOP HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
+Provide AT LEAST 5 ranked setups matching the live price data feed (Focusing on JPY, AUD, NZD, and USD majors).
+
+───────────────────────────
+⚠️ *RISK WARNING & LIQUIDITY NOTES (ASIAN SESSION EVENTS)*
+Upcoming RBA, RBNZ, BOJ announcements, Chinese economic prints, and Tokyo spread warnings.
+""",
+
     "LONDON_OUTLOOK": f"""
 Generate the **LONDON SESSION FUNDAMENTAL OUTLOOK** for Telegram.
 Watchlist: {', '.join(WATCHLIST)}
@@ -100,7 +156,7 @@ Deep dive into DXY structure, Treasury yields, US rate expectations, and liquidi
 
 ───────────────────────────
 📊 *COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX*
-Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and 1-sentence macro driver for ALL 14 assets:
+Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and 1-sentence macro driver for ALL WATCHLIST ASSETS:
 {', '.join(WATCHLIST)}.
 
 ───────────────────────────
@@ -126,11 +182,11 @@ REQUIRED VISUAL LAYOUT:
 ───────────────────────────
 
 💵 *DEDICATED DXY MACRO ANALYSIS*
-US Dollar Index positioning heading into Wall Street open, bond yield momentum, and Fed pricing.
+US Dollar Index positioning heading into Wall Street open, FRED yield momentum, and Fed pricing.
 
 ───────────────────────────
 📊 *COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX*
-Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL 14 assets:
+Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL WATCHLIST ASSETS:
 {', '.join(WATCHLIST)}.
 
 ───────────────────────────
@@ -168,11 +224,11 @@ REQUIRED VISUAL LAYOUT (Only if [MATERIAL_CHANGE]):
 
 ───────────────────────────
 💵 *DEDICATED DXY REACTION & YIELD IMPACT*
-Shift in DXY structure, bond yields, and interest rate expectations.
+Shift in DXY structure, FRED bond yields, and interest rate expectations.
 
 ───────────────────────────
 📊 *UPDATED DIRECTIONAL BIAS MATRIX*
-Post-event bias for ALL 14 assets: {', '.join(WATCHLIST)}.
+Post-event bias for ALL WATCHLIST ASSETS: {', '.join(WATCHLIST)}.
 
 ───────────────────────────
 🎯 *UPDATED HIGH-CONVICTION SETUPS (RANKED #1 TO #5 MINIMUM)*
@@ -183,7 +239,7 @@ AT LEAST 5 updated setups reflecting the new thesis using live market prices.
 Slippage, spread expansion, and session liquidity advisories.
 """,
 
-    "EOD_RECAP": f"""
+    "EOD_RECAP_WEEKDAY": f"""
 Generate the **END OF DAY MACRO & FUNDAMENTAL RECAP** for Telegram.
 Watchlist: {', '.join(WATCHLIST)}
 
@@ -197,7 +253,7 @@ In-depth review of DXY closing performance across Asian, London, and NY sessions
 
 ───────────────────────────
 📊 *DAILY CLOSING BIAS MATRIX*
-Closing price action and directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL 14 assets:
+Closing price action and directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL WATCHLIST ASSETS:
 {', '.join(WATCHLIST)}.
 
 ───────────────────────────
@@ -217,21 +273,106 @@ Key high-impact events for upcoming sessions, critical daily pivot levels, and p
 ───────────────────────────
 💡 *INSTITUTIONAL EDGE & PROCESS TAKEAWAY*
 Single highest-leverage execution or risk discipline lesson derived from today's price action.
+""",
+
+    "EOD_RECAP_FRIDAY": f"""
+Generate the **WEEKEND WRAP & SUNDAY OPEN MACRO OUTLOOK** for Telegram.
+Watchlist: {', '.join(WATCHLIST)}
+
+REQUIRED VISUAL LAYOUT:
+
+🌆 *WEEKEND WRAP & SUNDAY OPEN MACRO OUTLOOK*
+───────────────────────────
+
+💵 *WEEKLY DXY & CROSS-ASSET CLOSING RECAP*
+Comprehensive review of weekly DXY performance, Friday NY close structure, and Treasury yield shifts across all global sessions.
+
+───────────────────────────
+📊 *WEEKLY CLOSING BIAS MATRIX*
+Weekly closing directional state (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL WATCHLIST ASSETS:
+{', '.join(WATCHLIST)}.
+
+───────────────────────────
+🎯 *WEEKLY SETUP VERDICT SCOREBOARD*
+Audit of execution discipline and trade setup outcomes across the entire trading week (Grades A to F).
+
+───────────────────────────
+🔄 *WEEKLY STRUCTURAL SHIFTS & OPEN IMBALANCES*
+HTF weekly/daily Market Structure Shifts (CHoCH/BOS) and major unmitigated Fair Value Gaps (FVGs) carried into next week.
+
+───────────────────────────
+📅 *UPCOMING WEEK CALENDAR & SUNDAY OPEN OUTLOOK*
+Key high-impact events scheduled for the coming week, weekend geopolitical risk factors, and preliminary directional bias for Sunday market open / Monday Asia session.
+
+───────────────────────────
+💡 *WEEKLY PROCESS LESSON & INSTITUTIONAL EDGE*
+Highest-leverage risk management or execution takeaway to refine for next week's trading desk.
 """
 }
 
 # ---------------------------------------------------------------------------
-# Market Data, Calendar & News Fetchers
+# Market Data, FRED, Calendar & News Fetchers
 # ---------------------------------------------------------------------------
+def fetch_fred_yields() -> str:
+    """Pulls authoritative US Treasury yield series from FRED API with logging."""
+    if not FRED_API_KEY:
+        return "FRED API Key missing. Yield data defaulting to Yahoo Finance feed."
+
+    logging.info("Fetching US Treasury Yield series from FRED API...")
+    try:
+        url_10y = f"https://api.stlouisfed.org/fred/series/observations?series_id=DGS10&api_key={FRED_API_KEY}&file_type=json&sort_order=desc&limit=2"
+        res = requests.get(url_10y, timeout=5)
+        if res.status_code == 200:
+            obs = res.json().get("observations", [])
+            if len(obs) >= 2 and obs[0]["value"] != ".":
+                latest_10y = float(obs[0]["value"])
+                prev_10y = float(obs[1]["value"])
+                delta_10y = latest_10y - prev_10y
+                return f"FRED US 10Y Yield: {latest_10y:.2f}% (24h Change: {delta_10y:+.2f}%)"
+    except Exception as e:
+        logging.warning(f"FRED API fetch exception: {e}")
+
+    return "FRED Yield Feed: Data temporarily unavailable."
+
+def compute_copper_gold_ratio() -> str:
+    """Computes real-time Copper/Gold ratio as a leading risk indicator."""
+    try:
+        copper = yf.Ticker("HG=F")
+        gold = yf.Ticker("XAUUSD=X")
+
+        c_price = copper.fast_info.get("lastPrice") or copper.fast_info.get("regularMarketPrice")
+        g_price = gold.fast_info.get("lastPrice") or gold.fast_info.get("regularMarketPrice")
+
+        if c_price and g_price and g_price > 0:
+            ratio = (c_price / g_price) * 1000
+            return f"Copper/Gold Intermarket Ratio: {ratio:.4f} (HG: {c_price:.4f} | XAU: {g_price:.2f})"
+    except Exception as e:
+        logging.warning(f"Could not compute Copper/Gold ratio: {e}")
+
+    return "Copper/Gold Intermarket Ratio: Data unavailable"
+
 def fetch_live_market_data() -> str:
     ticker_mapping = {
-        # Core Watchlist (Spot FX & Index Tickers)
+        # Majors (7)
         "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "NZDUSD": "NZDUSD=X",
-        "AUDUSD": "AUDUSD=X", "USDCHF": "USDCHF=X", "USDCAD": "USDCAD=X",
-        "GOLD": "XAUUSD=X", "SILVER": "XAGUSD=X", "SP500": "^GSPC", "NAS100": "^NDX",
-        "DXY": "DX-Y.NYB", "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "GER40": "^GDAXI",
-        # Intermarket Drivers
-        "US10Y_YIELD": "^TNX", "US02Y_YIELD": "^IRX", "VIX_VOLATILITY": "^VIX", "WTI_CRUDE": "CL=F"
+        "AUDUSD": "AUDUSD=X", "USDCHF": "USDCHF=X", "USDCAD": "USDCAD=X", "USDJPY": "USDJPY=X",
+        # EUR Crosses (6)
+        "EURGBP": "EURGBP=X", "EURAUD": "EURAUD=X", "EURNZD": "EURNZD=X",
+        "EURCAD": "EURCAD=X", "EURCHF": "EURCHF=X", "EURJPY": "EURJPY=X",
+        # GBP Crosses (5)
+        "GBPAUD": "GBPAUD=X", "GBPNZD": "GBPNZD=X", "GBPCAD": "GBPCAD=X",
+        "GBPCHF": "GBPCHF=X", "GBPJPY": "GBPJPY=X",
+        # AUD / NZD Crosses (7)
+        "AUDNZD": "AUDNZD=X", "AUDCAD": "AUDCAD=X", "AUDCHF": "AUDCHF=X", "AUDJPY": "AUDJPY=X",
+        "NZDCAD": "NZDCAD=X", "NZDCHF": "NZDCHF=X", "NZDJPY": "NZDJPY=X",
+        # CAD / CHF Crosses (3)
+        "CADCHF": "CADCHF=X", "CADJPY": "CADJPY=X", "CHFJPY": "CHFJPY=X",
+        # Commodities, Crypto & Equity Indices
+        "GOLD": "XAUUSD=X", "SILVER": "XAGUSD=X", "COPPER": "HG=F",
+        "SP500": "^GSPC", "NAS100": "^NDX", "GER40": "^GDAXI", "JP225": "^N225",
+        "DXY": "DX-Y.NYB", "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD",
+        # Yield Benchmarks
+        "US10Y_YIELD": "^TNX", "US02Y_YIELD": "^IRX", "VIX_VOLATILITY": "^VIX"
     }
 
     logging.info("Fetching real-time spot market prices via fast_info live feed...")
@@ -269,7 +410,7 @@ def fetch_live_market_data() -> str:
 
 def fetch_live_macro_headlines() -> str:
     logging.info("Fetching real-time macro headlines via RSS feed...")
-    rss_url = "https://news.google.com/rss/search?q=forex+central+bank+inflation+fed+ecb+when:1d&hl=en-US&gl=US&ceid=US:en"
+    rss_url = "https://news.google.com/rss/search?q=forex+central+bank+inflation+fed+ecb+boj+when:1d&hl=en-US&gl=US&ceid=US:en"
     
     try:
         res = requests.get(rss_url, timeout=10)
@@ -331,6 +472,7 @@ def generate_session_banner(mode: str) -> io.BytesIO:
     ax.set_facecolor('#161b22')
 
     display_titles = {
+        "ASIAN_OUTLOOK": "ASIAN & PACIFIC SESSION OUTLOOK",
         "LONDON_OUTLOOK": "LONDON SESSION OUTLOOK",
         "NEW_YORK_OUTLOOK": "NEW YORK SESSION OUTLOOK",
         "INTRADAY_UPDATE": "INTRADAY THESIS UPDATE",
@@ -340,14 +482,16 @@ def generate_session_banner(mode: str) -> io.BytesIO:
 
     # Compute current active market session
     utc_hour = time.gmtime().tm_hour
-    if 7 <= utc_hour < 12:
+    if 22 <= utc_hour or utc_hour < 7:
+        session_state = "SESSION: TOKYO / SYDNEY ACTIVE | EUROPE CLOSED"
+    elif 7 <= utc_hour < 12:
         session_state = "SESSION: LONDON ACTIVE | ASIA CLOSED"
     elif 12 <= utc_hour < 16:
         session_state = "SESSION: LONDON / NY OVERLAP (PEAK LIQUIDITY)"
     elif 16 <= utc_hour < 21:
         session_state = "SESSION: NEW YORK ACTIVE | LONDON CLOSED"
     else:
-        session_state = "SESSION: ASIAN PACIFIC / OFF-PEAK HOURS"
+        session_state = "SESSION: OFF-PEAK HOURS / MARKET TRANSITION"
 
     ax.text(0.05, 0.75, "APEX INSTITUTIONAL MACRO DESK", fontsize=11, color='#8b949e', fontweight='bold', fontfamily='monospace')
     ax.text(0.05, 0.48, subtitle, fontsize=20, color='#ffffff', fontweight='bold', fontfamily='sans-serif')
@@ -489,6 +633,7 @@ def parse_arguments():
     cleaned = raw_mode.strip().upper()
 
     mapping = {
+        "ASIA": "ASIAN_OUTLOOK", "ASIAN": "ASIAN_OUTLOOK", "ASIAN_OUTLOOK": "ASIAN_OUTLOOK",
         "LONDON": "LONDON_OUTLOOK", "LONDON_OUTLOOK": "LONDON_OUTLOOK",
         "NEW_YORK": "NEW_YORK_OUTLOOK", "NEW_YORK_OUTLOOK": "NEW_YORK_OUTLOOK", "NY": "NEW_YORK_OUTLOOK",
         "INTRADAY": "INTRADAY_UPDATE", "INTRADAY_UPDATE": "INTRADAY_UPDATE",
@@ -509,13 +654,24 @@ def validate_environment():
         sys.exit(1)
 
 def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 3) -> str:
-    prompt = PROMPT_TEMPLATES[mode]
+    # Handle Friday EOD Market Close vs Weekday EOD
+    if mode == "EOD_RECAP":
+        is_friday = (time.gmtime().tm_wday == 4)
+        active_template_key = "EOD_RECAP_FRIDAY" if is_friday else "EOD_RECAP_WEEKDAY"
+    else:
+        active_template_key = mode
+
+    prompt = PROMPT_TEMPLATES[active_template_key]
     
     live_prices = fetch_live_market_data()
+    fred_yields = fetch_fred_yields()
+    copper_gold_ratio = compute_copper_gold_ratio()
     live_headlines = fetch_live_macro_headlines()
     economic_calendar = fetch_economic_calendar()
 
     prompt += f"\n\nLIVE MARKET PRICE & YIELD FEED (MANDATORY REFERENCE FOR ALL PRICES):\n{live_prices}"
+    prompt += f"\n\nFRED MACRO YIELD DATA:\n{fred_yields}"
+    prompt += f"\n\nINTERMARKET RISK METRIC:\n{copper_gold_ratio}"
     prompt += f"\n\nSTRUCTURED ECONOMIC CALENDAR (ACTUAL VS FORECAST):\n{economic_calendar}"
     prompt += f"\n\nBREAKING MACRO HEADLINES (24H):\n{live_headlines}"
 
@@ -537,7 +693,7 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
         logging.info(f"Attempting report generation with model target: '{model_name}'...")
         
         for attempt in range(1, max_retries + 1):
-            logging.info(f"Calling Gemini ({model_name}) for mode '{mode}' (Attempt {attempt}/{max_retries})...")
+            logging.info(f"Calling Gemini ({model_name}) for mode '{active_template_key}' (Attempt {attempt}/{max_retries})...")
 
             try:
                 response = client.models.generate_content(
