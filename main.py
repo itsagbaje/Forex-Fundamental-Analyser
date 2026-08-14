@@ -295,7 +295,6 @@ def fetch_economic_calendar() -> str:
         if not events:
             return "No economic calendar releases found for today."
 
-        # Filter for medium and high impact releases
         filtered_events = [e for e in events if str(e.get("impact", "")).lower() in ["high", "medium", "3", "2"]]
         
         lines = []
@@ -498,7 +497,7 @@ def validate_environment():
         logging.error(f"Missing required environment variable(s): {', '.join(missing)}")
         sys.exit(1)
 
-def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 5) -> str:
+def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str = None, max_retries: int = 3) -> str:
     prompt = PROMPT_TEMPLATES[mode]
     
     live_prices = fetch_live_market_data()
@@ -512,53 +511,77 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
     if custom_feed:
         prompt += f"\n\nCUSTOM BREAKING EVENT FEED:\n{custom_feed}"
 
+    # Model Fallback Chain to protect against Google server capacity spikes (503 UNAVAILABLE)
+    model_fallback_chain = [
+        PREFERRED_MODEL,
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-2.5-flash"
+    ]
+
     report_text = ""
     setup_count = 0
 
-    for attempt in range(1, max_retries + 1):
-        logging.info(f"Calling Gemini ({PREFERRED_MODEL}) for mode '{mode}' (Attempt {attempt}/{max_retries})...")
+    for model_name in model_fallback_chain:
+        logging.info(f"Attempting report generation with model target: '{model_name}'...")
+        
+        for attempt in range(1, max_retries + 1):
+            logging.info(f"Calling Gemini ({model_name}) for mode '{mode}' (Attempt {attempt}/{max_retries})...")
 
-        try:
-            response = client.models.generate_content(
-                model=PREFERRED_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTIONS,
-                    temperature=0.3,
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTIONS,
+                        temperature=0.3,
+                    )
                 )
-            )
-            report_text = (response.text or "").strip()
-        except Exception as e:
-            logging.error(f"API Error during generate_content: {e}")
-            if attempt < max_retries:
-                sleep_duration = 5 * (2 ** (attempt - 1))
-                logging.info(f"Temporary API failure. Retrying in {sleep_duration}s...")
-                time.sleep(sleep_duration)
-                continue
-            else:
-                raise e
+                report_text = (response.text or "").strip()
+                
+                # Check for Intraday No Material Change flag
+                if "[NO_MATERIAL_CHANGE]" in report_text:
+                    return "[NO_MATERIAL_CHANGE]"
 
-        # Check for Intraday No Material Change flag
-        if "[NO_MATERIAL_CHANGE]" in report_text:
-            return "[NO_MATERIAL_CHANGE]"
+                if not report_text.endswith(MANDATORY_DISCLAIMER.strip()):
+                    report_text += f"\n\n{MANDATORY_DISCLAIMER.strip()}"
 
-        if not report_text.endswith(MANDATORY_DISCLAIMER.strip()):
-            report_text += f"\n\n{MANDATORY_DISCLAIMER.strip()}"
+                if mode == "EOD_RECAP":
+                    return report_text
 
-        if mode == "EOD_RECAP":
+                setup_count = count_setups(report_text)
+                logging.info(f"Detected {setup_count} trade setup(s) in output.")
+
+                if setup_count >= 5:
+                    return report_text
+
+                logging.warning(f"Setup count validation failed ({setup_count}/5 required). Retrying prompt...")
+                prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 5 ranked, high-conviction trade setups clearly labeled (*Setup #1*, *Setup #2*, *Setup #3*, *Setup #4*, *Setup #5*) using the exact live prices provided."
+
+            except Exception as e:
+                error_str = str(e)
+                logging.error(f"API Error with model '{model_name}': {error_str}")
+                
+                # Handle Google server-side capacity spikes (503 UNAVAILABLE)
+                if "503" in error_str or "UNAVAILABLE" in error_str:
+                    if attempt < max_retries:
+                        sleep_duration = 4 * attempt
+                        logging.info(f"503 High Demand detected on Google servers. Waiting {sleep_duration}s...")
+                        time.sleep(sleep_duration)
+                    else:
+                        logging.warning(f"Model '{model_name}' exhausted retries due to 503 capacity limits. Switching to next model in fallback chain...")
+                        break
+                else:
+                    if attempt < max_retries:
+                        time.sleep(3)
+                    else:
+                        break
+
+        if report_text and setup_count >= 5:
             return report_text
 
-        setup_count = count_setups(report_text)
-        logging.info(f"Detected {setup_count} trade setup(s) in output.")
-
-        if setup_count >= 5:
-            return report_text
-
-        logging.warning(f"Setup count validation failed ({setup_count}/5 required). Retrying...")
-        prompt += "\n\nCRITICAL REQUIREMENT MISSING: You MUST generate AT LEAST 5 ranked, high-conviction trade setups clearly labeled (*Setup #1*, *Setup #2*, *Setup #3*, *Setup #4*, *Setup #5*) using the exact live prices provided."
-
-    logging.warning("Max retries reached. Dispatching best output.")
-    send_admin_alert(f"Mode `{mode}` generated only {setup_count}/5 setups after {max_retries} attempts.")
+    logging.warning("All fallback models exhausted. Dispatching best available output.")
+    send_admin_alert(f"Mode `{mode}` encountered Google server capacity issues across all fallback options.")
     return report_text
 
 # ---------------------------------------------------------------------------
@@ -568,7 +591,7 @@ def main():
     validate_environment()
     mode, custom_feed = parse_arguments()
 
-    logging.info(f"Starting pipeline | Mode: {mode} | Model: {PREFERRED_MODEL}")
+    logging.info(f"Starting pipeline | Mode: {mode} | Primary Model: {PREFERRED_MODEL}")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
 
