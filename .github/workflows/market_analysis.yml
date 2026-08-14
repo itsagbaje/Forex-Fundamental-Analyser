@@ -1,68 +1,89 @@
-name: Automated Forex Fundamental Analysis
+name: Apex Macro Desk Intelligence Pipeline
 
 on:
-  # Listens for real-time external API pings
+  # 1. Listens to Webhooks from cron-job.org (Exact Minute Execution)
   repository_dispatch:
-    types: [trigger-market-analysis]
+    types: [run_apex_desk]
 
-  # Allows manual runs from the GitHub UI for testing
+  # 2. Manual Trigger via GitHub Console
   workflow_dispatch:
     inputs:
-      mode:
-        description: 'Session Analysis Mode'
+      session_mode:
+        description: 'Select Session Mode'
         required: true
-        default: 'INTRADAY_UPDATE'
+        default: 'LONDON'
         type: choice
         options:
+          - ASIA
           - LONDON
-          - NEW_YORK
-          - INTRADAY_UPDATE
+          - NY
+          - INTRADAY
           - EOD
-      custom_feed:
-        description: 'Breaking Event Data / Live News Override (Optional)'
-        required: false
-        type: string
+
+  # 3. Fallback Native GitHub Cron (In case external webhook fails)
+  schedule:
+    - cron: '0 22 * * 0-4'  # Asia
+    - cron: '0 6 * * 1-5'   # London
+    - cron: '0 12 * * 1-5'  # New York
+    - cron: '30 21 * * 1-5'  # EOD
 
 jobs:
-  analyze-and-post:
+  run-macro-desk:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python Environment
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
           cache: 'pip'
 
       - name: Install System Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install google-genai requests python-dotenv yfinance matplotlib
+          pip install yfinance python-dotenv matplotlib requests google-genai
 
-      - name: Determine Analysis Mode
-        id: select_mode
+      - name: Determine Active Session Mode
+        id: session_check
         run: |
-          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
-            echo "RUN_MODE=${{ github.event.client_payload.mode }}" >> $GITHUB_ENV
-            echo "CUSTOM_FEED=${{ github.event.client_payload.custom_feed }}" >> $GITHUB_ENV
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "RUN_MODE=${{ github.event.inputs.mode }}" >> $GITHUB_ENV
-            echo "CUSTOM_FEED=${{ github.event.inputs.custom_feed }}" >> $GITHUB_ENV
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "MODE=${{ github.event.client_payload.session_mode }}" >> $GITHUB_ENV
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "MODE=${{ github.event.inputs.session_mode }}" >> $GITHUB_ENV
+          else
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" -eq "22" ]; then
+              echo "MODE=ASIA" >> $GITHUB_ENV
+            elif [ "$HOUR" -eq "6" ]; then
+              echo "MODE=LONDON" >> $GITHUB_ENV
+            elif [ "$HOUR" -eq "12" ]; then
+              echo "MODE=NY" >> $GITHUB_ENV
+            elif [ "$HOUR" -eq "21" ]; then
+              echo "MODE=EOD" >> $GITHUB_ENV
+            else
+              echo "MODE=LONDON" >> $GITHUB_ENV
+            fi
           fi
 
-      - name: Execute Fundamental Analyser
+      - name: Execute Apex Macro Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
-          GEMINI_MODEL: "gemini-3.5-flash"
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
-          if [ -n "$CUSTOM_FEED" ]; then
-            python main.py --mode ${{ env.RUN_MODE }} --feed "$CUSTOM_FEED"
-          else
-            python main.py --mode ${{ env.RUN_MODE }}
-          fi
+          python main.py --mode ${{ env.MODE }}
+
+      - name: Commit Updated CSV Setup Logs
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Bot"
+          git add setups_log.csv || true
+          git commit -m "Auto-update trade setups log [skip ci]" || true
+          git push || true
