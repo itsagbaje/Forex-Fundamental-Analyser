@@ -1,7 +1,7 @@
 name: Apex Macro Desk Intelligence Pipeline
 
 on:
-  # 1. Listens to Webhooks from cron-job.org (Exact Minute Execution)
+  # 1. Automated Webhook Trigger from cron-job.org
   repository_dispatch:
     types: [run_apex_desk]
 
@@ -19,13 +19,6 @@ on:
           - NY
           - INTRADAY
           - EOD
-
-  # 3. Fallback Native GitHub Cron (In case external webhook fails)
-  schedule:
-    - cron: '0 22 * * 0-4'  # Asia
-    - cron: '0 6 * * 1-5'   # London
-    - cron: '0 12 * * 1-5'  # New York
-    - cron: '30 21 * * 1-5'  # EOD
 
 jobs:
   run-macro-desk:
@@ -54,18 +47,7 @@ jobs:
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "MODE=${{ github.event.inputs.session_mode }}" >> $GITHUB_ENV
           else
-            HOUR=$(date -u +%H)
-            if [ "$HOUR" -eq "22" ]; then
-              echo "MODE=ASIA" >> $GITHUB_ENV
-            elif [ "$HOUR" -eq "6" ]; then
-              echo "MODE=LONDON" >> $GITHUB_ENV
-            elif [ "$HOUR" -eq "12" ]; then
-              echo "MODE=NY" >> $GITHUB_ENV
-            elif [ "$HOUR" -eq "21" ]; then
-              echo "MODE=EOD" >> $GITHUB_ENV
-            else
-              echo "MODE=LONDON" >> $GITHUB_ENV
-            fi
+            echo "MODE=LONDON" >> $GITHUB_ENV
           fi
 
       - name: Execute Apex Macro Engine
