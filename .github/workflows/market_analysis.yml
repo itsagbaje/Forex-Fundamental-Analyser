@@ -20,14 +20,6 @@ on:
           - INTRADAY
           - EOD
 
-  # 3. Hybrid Backup Schedule (UTC / Lagos UTC+1)
-  schedule:
-    - cron: '30 22 * * 0-4' # Asia (11:30 PM Lagos = 22:30 UTC)
-    - cron: '30 6 * * 1-5'  # London (7:30 AM Lagos = 06:30 UTC)
-    - cron: '30 11 * * 1-5' # New York (12:30 PM Lagos = 11:30 UTC)
-    - cron: '30 15 * * 1-5' # Intraday (4:30 PM Lagos = 15:30 UTC)
-    - cron: '0 21 * * 1-5'  # EOD (10:00 PM Lagos = 21:00 UTC)
-
 jobs:
   run-macro-desk:
     runs-on: ubuntu-latest
