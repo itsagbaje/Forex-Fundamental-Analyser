@@ -25,7 +25,9 @@ on:
     - cron: '30 22 * * 0-4' # Asia (11:30 PM WAT / 22:30 UTC)
     - cron: '30 5 * * 1-5'  # London (6:30 AM WAT / 05:30 UTC)
     - cron: '30 11 * * 1-5' # New York (12:30 PM WAT / 11:30 UTC)
-    - cron: '0 21 * * 1-5'  # EOD (10:00 PM WAT / 21:00 UTC)
+    - cron: '30 14 * * 1-5' # Intraday (15:30
+PM WAT / 14:30 UTC)
+    - cron: '0 21 * * 1-5'  # EOD (22:00 PM WAT / 21:00 UTC)
 
 jobs:
   run-macro-desk:
@@ -59,11 +61,13 @@ jobs:
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             SELECTED_MODE="${{ github.event.inputs.session_mode }}"
           else
-            # Backup UTC hour check matching 22:30, 05:30, 11:30, and 21:00 UTC
+            # Backup UTC hour check matching 22:30, 05:30, 11:30, 14:30, and 21:00 UTC
             HOUR=$(date -u +%H)
             if [ "$HOUR" -eq "22" ]; then SELECTED_MODE="ASIA";
-            elif [ "$HOUR" -eq "6" ]; then SELECTED_MODE="LONDON";
+            elif [ "$HOUR" -eq "5" ]; then SELECTED_MODE="LONDON";
             elif [ "$HOUR" -eq "11" ]; then SELECTED_MODE="NY";
+            elif [ "$HOUR" -eq "14" ]; then
+SELECTED_MODE=" INTRADAY";
             elif [ "$HOUR" -eq "21" ]; then SELECTED_MODE="EOD";
             fi
           fi
