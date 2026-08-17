@@ -1,11 +1,11 @@
 name: Apex Macro Desk Intelligence Pipeline
 
 on:
-  # 1. Automated Webhook Trigger from cron-job.org
+  # 1. Primary Trigger: Webhook from cron-job.org
   repository_dispatch:
     types: [run_apex_desk]
 
-  # 2. Manual Trigger via GitHub Console
+  # 2. Manual Trigger: GitHub Console
   workflow_dispatch:
     inputs:
       session_mode:
@@ -19,6 +19,13 @@ on:
           - NY
           - INTRADAY
           - EOD
+
+  # 3. Backup Schedule Map (GitHub Actions requires UTC / Lagos UTC+1)
+  schedule:
+    - cron: '30 22 * * 0-4' # Asia (11:30 PM WAT / 22:30 UTC)
+    - cron: '30 5 * * 1-5'  # London (6:30 AM WAT / 05:30 UTC)
+    - cron: '30 11 * * 1-5' # New York (12:30 PM WAT / 11:30 UTC)
+    - cron: '0 21 * * 1-5'  # EOD (10:00 PM WAT / 21:00 UTC)
 
 jobs:
   run-macro-desk:
@@ -42,13 +49,27 @@ jobs:
       - name: Determine Active Session Mode
         id: session_check
         run: |
+          SELECTED_MODE="LONDON"
+
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "MODE=${{ github.event.client_payload.session_mode }}" >> $GITHUB_ENV
+            INPUT_MODE="${{ github.event.client_payload.session_mode }}"
+            if [ -n "$INPUT_MODE" ]; then
+              SELECTED_MODE="$INPUT_MODE"
+            fi
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "MODE=${{ github.event.inputs.session_mode }}" >> $GITHUB_ENV
+            SELECTED_MODE="${{ github.event.inputs.session_mode }}"
           else
-            echo "MODE=LONDON" >> $GITHUB_ENV
+            # Backup UTC hour check matching 22:30, 05:30, 11:30, and 21:00 UTC
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" -eq "22" ]; then SELECTED_MODE="ASIA";
+            elif [ "$HOUR" -eq "5" ]; then SELECTED_MODE="LONDON";
+            elif [ "$HOUR" -eq "11" ]; then SELECTED_MODE="NY";
+            elif [ "$HOUR" -eq "21" ]; then SELECTED_MODE="EOD";
+            fi
           fi
+
+          echo "MODE=$SELECTED_MODE" >> $GITHUB_ENV
+          echo "Active Execution Mode: $SELECTED_MODE"
 
       - name: Execute Apex Macro Engine
         env:
@@ -69,3 +90,4 @@ jobs:
           git add setups_log.csv || true
           git commit -m "Auto-update trade setups log [skip ci]" || true
           git push || true
+          
