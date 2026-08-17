@@ -51,15 +51,6 @@ jobs:
             fi
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             SELECTED_MODE="${{ github.event.inputs.session_mode }}"
-          else
-            # Backup UTC hour check matching 22:30, 06:30, 11:30, 15:30, and 21:00 UTC
-            HOUR=$(date -u +%H)
-            if [ "$HOUR" -eq "22" ]; then SELECTED_MODE="ASIA";
-            elif [ "$HOUR" -eq "6" ]; then SELECTED_MODE="LONDON";
-            elif [ "$HOUR" -eq "11" ]; then SELECTED_MODE="NY";
-            elif [ "$HOUR" -eq "15" ]; then SELECTED_MODE="INTRADAY";
-            elif [ "$HOUR" -eq "21" ]; then SELECTED_MODE="EOD";
-            fi
           fi
 
           echo "MODE=$SELECTED_MODE" >> $GITHUB_ENV
@@ -84,4 +75,3 @@ jobs:
           git add setups_log.csv || true
           git commit -m "Auto-update trade setups log [skip ci]" || true
           git push || true
-          
