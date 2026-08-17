@@ -23,7 +23,7 @@ on:
   # 3. Backup Schedule Map (GitHub Actions requires UTC / Lagos UTC+1)
   schedule:
     - cron: '30 22 * * 0-4' # Asia (11:30 PM WAT / 22:30 UTC)
-    - cron: '30 5 * * 1-5'  # London (6:30 AM WAT / 05:30 UTC)
+    - cron: '30 6 * * 1-5'  # London (7:30 AM WAT / 06:30 UTC)
     - cron: '30 11 * * 1-5' # New York (12:30 PM WAT / 11:30 UTC)
     - cron: '0 21 * * 1-5'  # EOD (10:00 PM WAT / 21:00 UTC)
 
@@ -62,7 +62,7 @@ jobs:
             # Backup UTC hour check matching 22:30, 05:30, 11:30, and 21:00 UTC
             HOUR=$(date -u +%H)
             if [ "$HOUR" -eq "22" ]; then SELECTED_MODE="ASIA";
-            elif [ "$HOUR" -eq "5" ]; then SELECTED_MODE="LONDON";
+            elif [ "$HOUR" -eq "6" ]; then SELECTED_MODE="LONDON";
             elif [ "$HOUR" -eq "11" ]; then SELECTED_MODE="NY";
             elif [ "$HOUR" -eq "21" ]; then SELECTED_MODE="EOD";
             fi
