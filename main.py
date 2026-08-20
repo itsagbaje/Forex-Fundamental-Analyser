@@ -117,7 +117,8 @@ Every trade setup MUST follow this exact high-density condensed format:
 🎯 *Setup #X: [ASSET] ([BUY / SELL])*
 • *Score:* **[Composite Score] / +10** ([Conviction Rating]) | *Spot:* [Live Market Price]
 • *Score Breakdown:* `Yield:[+2/-2]` | `DXY:[+1/-1]` | `Risk:[+1/-1]` | `COT:[+3/+2/+1]` | `Sent:[+1/-1]` | `Leg:[+1/0]`
-• *Execution:* **Entry:** [Price] | **Target:** [Price] | **Stop:** [Price]
+• *Execution Trigger:* [Specific structural condition, session liquidity sweep, or pullback trigger]
+• *Invalidation Zone:* [Key structural level, session high/low, or HTF invalidation zone]
 • *Key Driver:* [1-2 sentence core fundamental macro driver and catalyst]
 • *Timing:* [Session timing and execution window]
 """
@@ -243,7 +244,15 @@ Post-event bias for ALL WATCHLIST ASSETS: {', '.join(WATCHLIST)}.
 
 ───────────────────────────
 🎯 *UPDATED HIGH-CONVICTION SETUPS (RANKED #1 TO #10 MINIMUM)*
-AT LEAST 10 updated setups reflecting the new thesis using live market prices. You MUST use the mandatory condensed setup breakdown format.
+AT LEAST 10 updated setups reflecting the new thesis using live market prices. You MUST use the mandatory condensed setup breakdown format:
+
+🎯 *Setup #X: [ASSET] ([BUY / SELL])*
+• *Score:* **[Composite Score] / +10** ([Conviction Rating]) | *Spot:* [Live Price]
+• *Score Breakdown:* `Yield:[+2/-2]` | `DXY:[+1/-1]` | `Risk:[+1/-1]` | `COT:[+3/+2/+1]` | `Sent:[+1/-1]` | `Leg:[+1/0]`
+• *Execution Trigger:* [Specific structural condition, session liquidity sweep, or pullback trigger]
+• *Invalidation Zone:* [Key structural level, session high/low, or HTF invalidation zone]
+• *Key Driver:* [1-sentence explanation of intraday price action or macro catalyst driving setup]
+• *Timing:* [Session execution window]
 
 ───────────────────────────
 ⚠️ *RISK WARNING & LIQUIDITY NOTES*
