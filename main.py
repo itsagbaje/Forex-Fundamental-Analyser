@@ -65,7 +65,7 @@ _The setups and directional biases provided above are analytical insights for ed
 # System Instructions & Telegram Formatting Rules
 # ---------------------------------------------------------------------------
 SYSTEM_INSTRUCTIONS = f"""
-You are a Lead Institutional Macro & Forex Fundamental Analyst operating the Apex Macro Desk decision engine.
+You are a Lead Institutional Macro & Forex Fundamental Analyst operating CASCADE (Nested Confluence Trading System).
 You analyze global financial markets across this complete watchlist:
 {', '.join(WATCHLIST)}.
 
@@ -562,7 +562,7 @@ def generate_session_banner(mode: str) -> io.BytesIO:
     else:
         session_state = "SESSION: OFF-PEAK HOURS / MARKET TRANSITION"
 
-    ax.text(0.05, 0.75, "APEX INSTITUTIONAL MACRO DESK", fontsize=11, color='#8b949e', fontweight='bold', fontfamily='monospace')
+    ax.text(0.05, 0.75, "CASCADE: NESTED CONFLUENCE TRADING SYSTEM", fontsize=10, color='#8b949e', fontweight='bold', fontfamily='monospace')
     ax.text(0.05, 0.48, subtitle, fontsize=20, color='#ffffff', fontweight='bold', fontfamily='sans-serif')
     ax.text(0.05, 0.28, session_state, fontsize=8, color='#3fb950', fontweight='bold', fontfamily='monospace')
     
@@ -621,11 +621,11 @@ def log_setups_to_csv(report_text: str, mode: str):
         with open(file_path, mode="a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(["Timestamp", "Session Mode", "Setup Details"])
+                writer.writerow(["Timestamp", "System", "Session Mode", "Setup Details"])
             
             for setup in setup_matches:
                 clean_title = setup.replace("*", "").strip()
-                writer.writerow([timestamp, mode, clean_title])
+                writer.writerow([timestamp, "CASCADE", mode, clean_title])
         logging.info(f"Successfully recorded {len(setup_matches)} setup(s) into {file_path}")
     except Exception as e:
         logging.warning(f"Could not log setups to CSV file: {e}")
@@ -639,7 +639,7 @@ def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
         files = {'photo': ('banner.png', banner_buf.getvalue(), 'image/png')}
         photo_res = requests.post(
             photo_url, 
-            data={'chat_id': TELEGRAM_CHANNEL_ID, 'caption': "📊 *Apex Institutional Intelligence Briefing*", 'parse_mode': 'Markdown'}, 
+            data={'chat_id': TELEGRAM_CHANNEL_ID, 'caption': "📊 *CASCADE: Intelligence Briefing*", 'parse_mode': 'Markdown'}, 
             files=files, 
             timeout=15
         )
