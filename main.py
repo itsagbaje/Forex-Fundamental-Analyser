@@ -138,8 +138,16 @@ Deep dive into DXY structure, Bank of Japan policy stance, Japanese Yields/JP225
 
 ───────────────────────────
 📊 *COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX*
-Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and 1-sentence macro driver for ALL WATCHLIST ASSETS:
-{', '.join(WATCHLIST)}.
+Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories, including both live spot price and a 1-sentence macro driver:
+
+🟢 *BULLISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🔴 *BEARISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🟡 *NEUTRAL / NO EDGE:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
 
 ───────────────────────────
 🔄 *OVERNIGHT FLOWS & SYDNEY/TOKYO LIQUIDITY SWEEPS*
@@ -168,8 +176,16 @@ Deep dive into DXY structure, Treasury yields, US rate expectations, and liquidi
 
 ───────────────────────────
 📊 *COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX*
-Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) and 1-sentence macro driver for ALL WATCHLIST ASSETS:
-{', '.join(WATCHLIST)}.
+Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories, including both live spot price and a 1-sentence macro driver:
+
+🟢 *BULLISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🔴 *BEARISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🟡 *NEUTRAL / NO EDGE:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
 
 ───────────────────────────
 🔄 *INTRADAY CONTINUITY & THESIS CHECK*
@@ -198,8 +214,16 @@ US Dollar Index positioning heading into Wall Street open, FRED yield momentum, 
 
 ───────────────────────────
 📊 *COMPLETE WATCHLIST DIRECTIONAL BIAS MATRIX*
-Explicit Directional Bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL WATCHLIST ASSETS:
-{', '.join(WATCHLIST)}.
+Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories, including both live spot price and a 1-sentence macro driver:
+
+🟢 *BULLISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🔴 *BEARISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🟡 *NEUTRAL / NO EDGE:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
 
 ───────────────────────────
 🔄 *INTRADAY CONTINUITY & THESIS TRANSITION*
@@ -240,7 +264,16 @@ Shift in DXY structure, FRED bond yields, and interest rate expectations.
 
 ───────────────────────────
 📊 *UPDATED DIRECTIONAL BIAS MATRIX*
-Post-event bias for ALL WATCHLIST ASSETS: {', '.join(WATCHLIST)}.
+Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories, including both live spot price and a 1-sentence macro driver:
+
+🟢 *BULLISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🔴 *BEARISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🟡 *NEUTRAL / NO EDGE:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
 
 ───────────────────────────
 🎯 *UPDATED HIGH-CONVICTION SETUPS (RANKED #1 TO #10 MINIMUM)*
@@ -273,8 +306,16 @@ In-depth review of DXY closing performance across Asian, London, and NY sessions
 
 ───────────────────────────
 📊 *DAILY CLOSING BIAS MATRIX*
-Closing price action and directional bias (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL WATCHLIST ASSETS:
-{', '.join(WATCHLIST)}.
+Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories, including both daily closing spot price and a 1-sentence macro driver:
+
+🟢 *BULLISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🔴 *BEARISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🟡 *NEUTRAL / NO EDGE:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
 
 ───────────────────────────
 🎯 *SETUP VERDICT SCOREBOARD (SESSION EXECUTION AUDIT)*
@@ -309,8 +350,16 @@ Comprehensive review of weekly DXY performance, Friday NY close structure, and T
 
 ───────────────────────────
 📊 *WEEKLY CLOSING BIAS MATRIX*
-Weekly closing directional state (🟢 Bullish / 🔴 Bearish / 🟡 Neutral) for ALL WATCHLIST ASSETS:
-{', '.join(WATCHLIST)}.
+Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories, including both Friday closing spot price and a 1-sentence macro driver:
+
+🟢 *BULLISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🔴 *BEARISH BIAS:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
+
+🟡 *NEUTRAL / NO EDGE:*
+• [ASSET] (Spot: [Price]) | [1-sentence macro driver]
 
 ───────────────────────────
 🎯 *WEEKLY SETUP VERDICT SCOREBOARD*
