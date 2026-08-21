@@ -1,9 +1,9 @@
-name: Apex Macro Desk Intelligence Pipeline
+name: CASCADE Intelligence Pipeline
 
 on:
   # 1. Automated Webhook Trigger from cron-job.org
   repository_dispatch:
-    types: [run_apex_desk]
+    types: [run_apex_desk, trigger-market-analysis, run_cascade]
 
   # 2. Manual Trigger via GitHub Actions Console
   workflow_dispatch:
@@ -21,7 +21,7 @@ on:
           - EOD
 
 jobs:
-  run-macro-desk:
+  run-cascade-engine:
     runs-on: ubuntu-latest
 
     steps:
@@ -46,6 +46,9 @@ jobs:
 
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             INPUT_MODE="${{ github.event.client_payload.session_mode }}"
+            if [ -z "$INPUT_MODE" ]; then
+              INPUT_MODE="${{ github.event.client_payload.mode }}"
+            fi
             if [ -n "$INPUT_MODE" ]; then
               SELECTED_MODE="$INPUT_MODE"
             fi
@@ -56,7 +59,7 @@ jobs:
           echo "MODE=$SELECTED_MODE" >> $GITHUB_ENV
           echo "Active Execution Mode: $SELECTED_MODE"
 
-      - name: Execute Apex Macro Engine
+      - name: Execute CASCADE Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
