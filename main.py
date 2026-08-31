@@ -138,13 +138,13 @@ Concise analysis (2-3 sentences max) of DXY structure, Bank of Japan policy stan
 Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories. Keep driver descriptions strictly to 1 short sentence per asset:
 
 🟢 *BULLISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🔴 *BEARISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🟡 *NEUTRAL / NO EDGE:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 ───────────────────────────
 🔄 *OVERNIGHT FLOWS & SYDNEY/TOKYO LIQUIDITY SWEEPS*
@@ -176,13 +176,13 @@ Concise analysis (2-3 sentences max) of DXY structure, Treasury yields, US rate 
 Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories. Keep driver descriptions strictly to 1 short sentence per asset:
 
 🟢 *BULLISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🔴 *BEARISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🟡 *NEUTRAL / NO EDGE:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 ───────────────────────────
 🔄 *INTRADAY CONTINUITY & THESIS CHECK*
@@ -214,13 +214,13 @@ Concise analysis (2-3 sentences max) of US Dollar Index positioning heading into
 Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories. Keep driver descriptions strictly to 1 short sentence per asset:
 
 🟢 *BULLISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🔴 *BEARISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🟡 *NEUTRAL / NO EDGE:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 ───────────────────────────
 🔄 *INTRADAY CONTINUITY & THESIS TRANSITION*
@@ -264,13 +264,13 @@ REQUIRED VISUAL LAYOUT (Only if [MATERIAL_CHANGE]):
 Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories. Keep driver descriptions strictly to 1 short sentence per asset:
 
 🟢 *BULLISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🔴 *BEARISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🟡 *NEUTRAL / NO EDGE:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 ───────────────────────────
 🎯 *UPDATED HIGH-CONVICTION SETUPS (RANKED TOP 3 TO TOP 5)*
@@ -298,13 +298,13 @@ Concise review (2-3 sentences max) of DXY closing performance across Asian, Lond
 Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories. Keep driver descriptions strictly to 1 short sentence per asset:
 
 🟢 *BULLISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🔴 *BEARISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🟡 *NEUTRAL / NO EDGE:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 ───────────────────────────
 🎯 *SETUP VERDICT SCOREBOARD (SESSION EXECUTION AUDIT)*
@@ -342,13 +342,13 @@ Concise review (2-3 sentences max) of weekly DXY performance, Friday NY close st
 Categorize ALL 38 WATCHLIST ASSETS strictly into these 3 directional categories. Keep driver descriptions strictly to 1 short sentence per asset:
 
 🟢 *BULLISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🔴 *BEARISH BIAS:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 🟡 *NEUTRAL / NO EDGE:*
-• [ASSET] (Spot: [Price]) | [1 short sentence driver]
+• *[ASSET]* (Spot: [Price]) | [1 short sentence driver]
 
 ───────────────────────────
 🎯 *WEEKLY SETUP VERDICT SCOREBOARD*
