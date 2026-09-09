@@ -49,13 +49,14 @@ WATCHLIST = [
     "GOLD", "SILVER", "COPPER", "SP500", "NAS100", "GER40", "JP225", "BTCUSDT", "ETHUSDT", "DXY"
 ]
 
+LAST_REPORT_CACHE_FILE = "last_report.txt"
 PREFERRED_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
-FRED_API_KEY = os.getenv("FRED_API_KEY", "d9cca9a169f732432e312ad7efcc4fae")
+FRED_API_KEY = os.getenv("FRED_API_KEY")
 
 MANDATORY_DISCLAIMER = """───────────────────────────
 ⚠️ *RISK DISCLAIMER & SUBSCRIBER NOTICE*
@@ -76,36 +77,31 @@ TELEGRAM VISUAL FORMATTING RULES & BREVITY DIRECTIVES (CRITICAL):
 4. Keep all analysis ultra-concise, high-density, and scannable. Limit macro section breakdowns to 2-3 short, punchy sentences maximum. Eliminate verbose narrative fluff.
 5. Keep line breaks clean for effortless mobile reading on Telegram.
 
-INSTITUTIONAL WEIGHTED SCORECARD (MANDATORY EVALUATION ENGINE):
-For every pair on the watchlist, calculate a Composite Edge Score from -10 to +10 by evaluating these 6 weighted factors:
+GROUNDED INSTITUTIONAL SCORECARD (VERIFIABLE FACTOR EVALUATION ENGINE):
+Score each asset from -10 to +10 using ONLY the verified market feeds provided in the prompt:
 
-1. Yield Differential Momentum (Weight: ±2 Points):
-   • +2: Base currency bond yields outpace Quote currency yields over 24h.
-   • -2: Quote currency bond yields outpace Base currency yields over 24h.
+1. 24-Hour Price Momentum & Structure Alignment (Weight: ±2 Points):
+   • +2: Strong positive 24h delta (> +0.35%) and trading above session support.
+   • -2: Strong negative 24h delta (< -0.35%) and trading below session resistance.
 
-2. DXY / Relative Strength Divergence (Weight: ±1 Point):
-   • +1: Asset rises while DXY is strong (Class-A Relative Strength).
-   • -1: Asset falls while DXY is weak (Class-A Relative Weakness).
+2. US 10Y Yield Momentum & Policy Path (Weight: ±2 Points):
+   • +2: FRED US10Y yield expansion supports USD longs or pressures safe-haven JPY/CHF.
+   • -2: FRED US10Y yield contraction pressures USD and supports safe havens / anti-USD assets.
 
-3. Intermarket Risk Regime Alignment (Weight: ±1 Point):
-   • +1: Copper/Gold ratio rising + SP500/JP225 up -> Aligned with Long Growth currencies (AUD, NZD, CAD).
-   • -1: Copper/Gold ratio falling + VIX rising -> Aligned with Safe Havens (JPY, CHF, USD).
+3. Intermarket Risk Regime Alignment (Weight: ±2 Points):
+   • +2: Copper/Gold ratio rising alongside equity strength (SP500/NAS100) -> Growth currencies favored (AUD, NZD, CAD).
+   • -2: Copper/Gold ratio falling alongside rising VIX -> Safe Havens favored (USD, JPY, CHF).
 
-4. Institutional COT Positioning Hierarchy (Weight: ±3 / ±2 / ±1 Points):
-   • ±3: Asset Managers heavily net positioning alignment.
-   • ±2: Leveraged Funds net positioning alignment.
-   • ±1: Non-Commercial net positioning alignment.
+4. Economic Calendar & Catalyst Divergence (Weight: ±2 Points):
+   • +2: Actual prints beat forecast for base currency or miss for quote currency.
+   • -2: Actual prints miss forecast for base currency or beat for quote currency.
 
-5. Retail Sentiment Contrarian Flag (Weight: ±1 Point):
-   • +1: Retail sentiment is heavily short (>70% short) -> Bullish contrarian bias.
-   • -1: Retail sentiment is heavily long (>70% long) -> Bearish contrarian bias.
-
-6. Triangular Leg Agreement Modifier (Weight: ±1 Point):
-   • +1: Both underlying USD major legs push in the same direction.
-   • 0: USD major legs diverge (Do NOT eliminate the setup; assign 0 bonus points).
+5. Macro Headline & Sentiment Flow Alignment (Weight: ±2 Points):
+   • +2: Live RSS headline narrative strongly supports asset direction.
+   • -2: Live RSS headline narrative contradicts asset direction.
 
 SCORE CONVICTION THRESHOLDS & MANDATORY OUTPUTS:
-• You MUST evaluate all 38 assets on the watchlist and generate TOP 3 TO 5 RANKED HIGH-CONVICTION TRADE SETUPS clearly labeled (*Setup #1* through *Setup #3* minimum, up to *Setup #5*).
+• Evaluate all 38 assets on the watchlist and generate TOP 3 TO 5 RANKED HIGH-CONVICTION TRADE SETUPS clearly labeled (*Setup #1* through *Setup #3* minimum, up to *Setup #5*).
 • Score >= +7: HIGH-CONVICTION BULLISH (Eligible for Ranked Setup)
 • Score <= -7: HIGH-CONVICTION BEARISH (Eligible for Ranked Setup)
 • Score +3 to +6 / -3 to -6: MODERATE CONVICTION (Include in Directional Matrix only)
@@ -117,7 +113,7 @@ Every trade setup MUST follow this exact concise 3-bullet format:
 🎯 *Setup #X: [ASSET] ([BUY / SELL])*
 • *Score:* **[Composite Score] / +10** ([Conviction Rating]) | *Spot:* [Live Market Price]
 • *Trigger & Invalidation:* Trigger: [1-sentence trigger] | Invalidation: [1-sentence zone]
-• *Driver:* [1 concise sentence stating core fundamental catalyst]
+• *Driver:* [1 concise sentence stating core fundamental catalyst based on provided data]
 """
 
 PROMPT_TEMPLATES = {
@@ -240,6 +236,8 @@ Evaluate recent market price action and catalysts for an **INTRADAY UPDATE REPOR
 Watchlist: {', '.join(WATCHLIST)}
 
 INSTRUCTIONS:
+You are provided with the text of the PREVIOUS SESSION REPORT below.
+Compare the current live market pricing, yield delta, and latest news against that previous report.
 First, determine if recent events or price action have caused a MATERIAL CHANGE in the market thesis, DXY stance, or setup validity.
 - If NO material change: Begin output with `[NO_MATERIAL_CHANGE]` and explain why in 1 sentence.
 - If YES (material change): Begin output with `[MATERIAL_CHANGE]` and generate the report below.
@@ -250,10 +248,10 @@ REQUIRED VISUAL LAYOUT (Only if [MATERIAL_CHANGE]):
 ───────────────────────────
 
 📌 *EVENT BREAKDOWN & MATERIAL SHIFT*
-• *Previous Analysis Summary:* <1 short sentence recap>
-• *Catalyst / Market Movement:* <1 short sentence on catalyst>
-• *Invalidations & Assumptions Broken:* <1 short sentence on dead setups>
-• *New Core Market Thesis:* <1 concise sentence on new macro stance>
+• *Previous Analysis Summary:* <1 short sentence recap referencing the provided prior briefing>
+• *Catalyst / Market Movement:* <1 short sentence on observed price or data deviation>
+• *Invalidations & Assumptions Broken:* <1 short sentence on previous setups that failed or hit invalidation>
+• *New Core Market Thesis:* <1 concise sentence on updated directional bias>
 
 ───────────────────────────
 💵 *DEDICATED DXY REACTION & YIELD IMPACT*
@@ -374,7 +372,7 @@ Highest-leverage risk management or execution takeaway to refine for next week's
 def fetch_fred_yields() -> str:
     """Pulls authoritative US Treasury yield series from FRED API with logging."""
     if not FRED_API_KEY:
-        return "FRED API Key missing. Yield data defaulting to Yahoo Finance feed."
+        return "FRED API Key not configured. US Treasury Yield benchmark unavailable."
 
     logging.info("Fetching US Treasury Yield series from FRED API...")
     try:
@@ -388,7 +386,7 @@ def fetch_fred_yields() -> str:
                 delta_10y = latest_10y - prev_10y
                 return f"FRED US 10Y Yield: {latest_10y:.2f}% (24h Change: {delta_10y:+.2f}%)"
     except Exception as e:
-        logging.warning(f"FRED API fetch exception: {e}")
+        logging.warning(f"FRED API fetch exception: {sanitize_error_text(str(e))}")
 
     return "FRED Yield Feed: Data temporarily unavailable."
 
@@ -439,12 +437,9 @@ def fetch_live_market_data() -> str:
     for asset, symbol in ticker_mapping.items():
         try:
             ticker = yf.Ticker(symbol)
-            
-            # Fetch live real-time price and previous close from ticker fast_info
             last_price = ticker.fast_info.get("lastPrice") or ticker.fast_info.get("regularMarketPrice")
             prev_close = ticker.fast_info.get("previousClose") or ticker.fast_info.get("regularMarketPreviousClose")
 
-            # Fallback to intraday snapshot if fast_info is unavailable
             if last_price is None or prev_close is None:
                 hist = ticker.history(period="2d", interval="1m")
                 if not hist.empty:
@@ -518,7 +513,7 @@ def fetch_economic_calendar() -> str:
 
         return "\n".join(lines) if lines else "No high/medium impact calendar releases scheduled today."
     except Exception as e:
-        logging.warning(f"Could not fetch economic calendar: {e}")
+        logging.warning(f"Could not fetch economic calendar: {sanitize_error_text(str(e))}")
         return "Economic calendar fetch failed."
 
 # ---------------------------------------------------------------------------
@@ -567,10 +562,15 @@ def generate_session_banner(mode: str) -> io.BytesIO:
     return buf
 
 # ---------------------------------------------------------------------------
-# Formatting, Logging & Telegram Helpers
+# Formatting, Security, Logging & Telegram Helpers
 # ---------------------------------------------------------------------------
+def sanitize_error_text(text: str) -> str:
+    """Masks secrets and query parameters from log messages and Telegram error notifications."""
+    text = re.sub(r"(api_key|token|key|bot[0-9]+:)[=:][A-Za-z0-9_\-]+", r"\1=[REDACTED]", text, flags=re.IGNORECASE)
+    return text
+
 def sanitize_telegram_markdown(text: str) -> str:
-    # Auto-close unclosed bold or italic tags to prevent Telegram API 400 rejection
+    """Balances unclosed bold and italic tags to protect against Telegram Markdown parse rejection."""
     if text.count("*") % 2 != 0:
         text += "*"
     if text.count("_") % 2 != 0:
@@ -599,8 +599,7 @@ def log_setups_to_csv(report_text: str, mode: str):
     file_exists = os.path.isfile(file_path)
     timestamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
     
-    # Extract setup titles matching Setup #1, Setup #2 format
-    setup_matches = re.findall(r"\*Setup #\d+:.*?\*", report_text)
+    setup_matches = re.findall(r"🎯\s*\*Setup\s*#\d+:.*?\*", report_text)
     
     if not setup_matches:
         logging.info("No formatted trade setups detected to write into CSV log.")
@@ -613,7 +612,7 @@ def log_setups_to_csv(report_text: str, mode: str):
                 writer.writerow(["Timestamp", "System", "Session Mode", "Setup Details"])
             
             for setup in setup_matches:
-                clean_title = setup.replace("*", "").strip()
+                clean_title = setup.replace("*", "").replace("🎯", "").strip()
                 writer.writerow([timestamp, "CASCADE", mode, clean_title])
         logging.info(f"Successfully recorded {len(setup_matches)} setup(s) into {file_path}")
     except Exception as e:
@@ -635,7 +634,7 @@ def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
         if photo_res.status_code != 200:
             logging.warning(f"Banner upload alert ({photo_res.status_code}): {photo_res.text}")
     except Exception as e:
-        logging.warning(f"Banner photo dispatch exception: {e}")
+        logging.warning(f"Banner photo dispatch exception: {sanitize_error_text(str(e))}")
 
     # 2. Sanitize and Send Chunked Text Report
     sanitized_text = sanitize_telegram_markdown(text)
@@ -663,19 +662,19 @@ def send_telegram_media_and_message(text: str, banner_buf: io.BytesIO) -> bool:
     return success
 
 def send_admin_alert(message: str):
-    if not TELEGRAM_ADMIN_CHAT_ID: return
+    if not TELEGRAM_ADMIN_CHAT_ID or not TELEGRAM_BOT_TOKEN:
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_ADMIN_CHAT_ID, "text": f"⚠️ *SYSTEM ALERT*\n{message}", "parse_mode": "Markdown"}
-    try: requests.post(url, json=payload, timeout=5)
-    except Exception as e: logging.error(f"Admin alert dispatch failed: {e}")
+    clean_msg = sanitize_error_text(message)
+    payload = {"chat_id": TELEGRAM_ADMIN_CHAT_ID, "text": f"⚠️ *SYSTEM ALERT*\n{clean_msg}", "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        logging.error(f"Admin alert dispatch failed: {e}")
 
 def count_setups(report_text: str) -> int:
-    matches = re.findall(r"(?i)(?:setup|rank|opportunity)\s*#?\d+", report_text)
-    if matches:
-        normalized = [m.lower().replace(" ", "") for m in matches]
-        return len(set(normalized))
-    bullet_matches = re.findall(r"\n\s*(?:\d+\.|\*|\-)\s+\*Setup.*?(?:BUY|SELL|LONG|SHORT)", report_text, re.IGNORECASE)
-    return len(bullet_matches)
+    """Strictly matches standardized setup headers to prevent false positives."""
+    return len(re.findall(r"🎯\s*\*Setup\s*#\d+:", report_text))
 
 # ---------------------------------------------------------------------------
 # Report Generation & Logic Pipeline
@@ -706,6 +705,7 @@ def validate_environment():
     if not GEMINI_API_KEY: missing.append("GEMINI_API_KEY")
     if not TELEGRAM_BOT_TOKEN: missing.append("TELEGRAM_BOT_TOKEN")
     if not TELEGRAM_CHANNEL_ID: missing.append("TELEGRAM_CHANNEL_ID")
+    if not FRED_API_KEY: missing.append("FRED_API_KEY")
 
     if missing:
         logging.error(f"Missing required environment variable(s): {', '.join(missing)}")
@@ -721,6 +721,19 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
 
     prompt = PROMPT_TEMPLATES[active_template_key]
     
+    # State Memory: Inject previous report if executing INTRADAY_UPDATE
+    if mode == "INTRADAY_UPDATE":
+        if os.path.isfile(LAST_REPORT_CACHE_FILE):
+            try:
+                with open(LAST_REPORT_CACHE_FILE, "r", encoding="utf-8") as f:
+                    prev_report = f.read().strip()
+                if prev_report:
+                    prompt += f"\n\nPREVIOUS SESSION REPORT FOR CONTINUITY AUDIT:\n{prev_report}"
+            except Exception as e:
+                logging.warning(f"Could not load previous report cache: {e}")
+        else:
+            prompt += "\n\nPREVIOUS SESSION REPORT FOR CONTINUITY AUDIT:\n[Initial session run. No previous report cached on disk.]"
+
     live_prices = fetch_live_market_data()
     fred_yields = fetch_fred_yields()
     copper_gold_ratio = compute_copper_gold_ratio()
@@ -785,7 +798,7 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
 
             except Exception as e:
                 error_str = str(e)
-                logging.error(f"API Error with model '{model_name}': {error_str}")
+                logging.error(f"API Error with model '{model_name}': {sanitize_error_text(error_str)}")
                 
                 # Handle Google server-side capacity spikes (503 UNAVAILABLE)
                 if "503" in error_str or "UNAVAILABLE" in error_str:
@@ -806,7 +819,7 @@ def generate_report_with_retry(client: genai.Client, mode: str, custom_feed: str
             return report_text
 
     logging.warning("All fallback models exhausted. Dispatching best available output.")
-    send_admin_alert(f"Mode `{mode}` encountered Google server capacity issues across all fallback options.")
+    send_admin_alert(f"Mode `{mode}` encountered server capacity or output threshold limits across all fallback models.")
     return report_text
 
 # ---------------------------------------------------------------------------
@@ -831,6 +844,19 @@ def main():
         # Clean tag if present
         report = report.replace("[MATERIAL_CHANGE]", "").strip()
 
+        # Operational Guard: Prevent publishing empty or blank text reports
+        if not report or not report.strip():
+            logging.error("Generated report is completely empty. Aborting dispatch.")
+            send_admin_alert(f"Execution failed: Report generation produced blank output for mode `{mode}`. Telegram post suppressed.")
+            sys.exit(1)
+
+        # Update disk cache for subsequent intraday comparisons
+        try:
+            with open(LAST_REPORT_CACHE_FILE, "w", encoding="utf-8") as f:
+                f.write(report)
+        except Exception as e:
+            logging.warning(f"Could not persist report to cache file: {e}")
+
         # Log setups to CSV file
         log_setups_to_csv(report, mode)
 
@@ -845,7 +871,7 @@ def main():
             sys.exit(1)
 
     except Exception as e:
-        error_msg = f"Pipeline execution failed for mode `{mode}`:\n`{str(e)}`"
+        error_msg = f"Pipeline execution failed for mode `{mode}`:\n`{sanitize_error_text(str(e))}`"
         logging.error(error_msg, exc_info=True)
         send_admin_alert(error_msg)
         sys.exit(1)
