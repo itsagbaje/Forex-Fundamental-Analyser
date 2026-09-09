@@ -533,18 +533,15 @@ def generate_session_banner(mode: str) -> io.BytesIO:
     }
     subtitle = display_titles.get(mode, "MARKET INTELLIGENCE BRIEF")
 
-    # Compute current active market session
-    utc_hour = time.gmtime().tm_hour
-    if 22 <= utc_hour or utc_hour < 7:
-        session_state = "SESSION: TOKYO / SYDNEY ACTIVE | EUROPE CLOSED"
-    elif 7 <= utc_hour < 12:
-        session_state = "SESSION: LONDON ACTIVE | ASIA CLOSED"
-    elif 12 <= utc_hour < 16:
-        session_state = "SESSION: LONDON / NY OVERLAP (PEAK LIQUIDITY)"
-    elif 16 <= utc_hour < 21:
-        session_state = "SESSION: NEW YORK ACTIVE | LONDON CLOSED"
-    else:
-        session_state = "SESSION: OFF-PEAK HOURS / MARKET TRANSITION"
+    # Map session state directly to report mode to ensure accurate pre-session tagging
+    state_mapping = {
+        "ASIAN_OUTLOOK": "PRE-MARKET: SYDNEY / TOKYO OPEN PREPARATION",
+        "LONDON_OUTLOOK": "PRE-MARKET: FRANKFURT / LONDON OPEN PREPARATION",
+        "NEW_YORK_OUTLOOK": "PRE-MARKET: NEW YORK / WALL STREET OPEN PREPARATION",
+        "INTRADAY_UPDATE": "MID-SESSION: INTRADAY LIQUIDITY & THESIS AUDIT",
+        "EOD_RECAP": "MARKET WRAP: DAILY CLOSING BENCHMARKS & REVIEW"
+    }
+    session_state = state_mapping.get(mode, "ACTIVE MARKET INTELLIGENCE")
 
     ax.text(0.05, 0.75, "CASCADE: NESTED CONFLUENCE TRADING SYSTEM", fontsize=10, color='#8b949e', fontweight='bold', fontfamily='monospace')
     ax.text(0.05, 0.48, subtitle, fontsize=20, color='#ffffff', fontweight='bold', fontfamily='sans-serif')
