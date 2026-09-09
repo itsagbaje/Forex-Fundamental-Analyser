@@ -1,11 +1,24 @@
 name: CASCADE Intelligence Pipeline
 
 on:
-  # 1. Automated Webhook Trigger from cron-job.org
+  # 1. Native GitHub Actions Automated Cron Schedule (Times in UTC | Africa/Lagos is UTC+1)
+  schedule:
+    # 07:15 WAT (Mon-Fri) -> 06:15 UTC (London Session Pre-Market)
+    - cron: '15 6 * * 1-5'
+    # 12:45 WAT (Mon-Fri) -> 11:45 UTC (New York Session Pre-Market)
+    - cron: '45 11 * * 1-5'
+    # 15:15 WAT (Mon-Fri) -> 14:15 UTC (Intraday Catalyst & Thesis Audit)
+    - cron: '15 14 * * 1-5'
+    # 22:10 WAT (Mon-Fri) -> 21:10 UTC (End-of-Day Macro Recap & Audit)
+    - cron: '10 21 * * 1-5'
+    # 22:45 WAT (Sun-Thu) -> 21:45 UTC (Asian Session Pre-Market)
+    - cron: '45 21 * * 0-4'
+
+  # 2. Automated Webhook Trigger from cron-job.org (Preserved for external triggers)
   repository_dispatch:
     types: [run_apex_desk, trigger-market-analysis, run_cascade]
 
-  # 2. Manual Trigger via GitHub Actions Console
+  # 3. Manual Trigger via GitHub Actions Console
   workflow_dispatch:
     inputs:
       session_mode:
@@ -54,6 +67,29 @@ jobs:
             fi
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             SELECTED_MODE="${{ github.event.inputs.session_mode }}"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            # Calculate total UTC minutes elapsed today (Hour * 60 + Minute)
+            UTC_H=$(date -u +%-H)
+            UTC_M=$(date -u +%-M)
+            TOTAL_MIN=$((UTC_H * 60 + UTC_M))
+
+            # Delay-tolerant time window routing
+            if [ $TOTAL_MIN -ge 300 ] && [ $TOTAL_MIN -le 540 ]; then
+              # 05:00 - 09:00 UTC window (Targets 06:15 UTC / 07:15 WAT)
+              SELECTED_MODE="LONDON"
+            elif [ $TOTAL_MIN -ge 600 ] && [ $TOTAL_MIN -le 780 ]; then
+              # 10:00 - 13:00 UTC window (Targets 11:45 UTC / 12:45 WAT)
+              SELECTED_MODE="NY"
+            elif [ $TOTAL_MIN -ge 781 ] && [ $TOTAL_MIN -le 1050 ]; then
+              # 13:01 - 17:30 UTC window (Targets 14:15 UTC / 15:15 WAT)
+              SELECTED_MODE="INTRADAY"
+            elif [ $TOTAL_MIN -ge 1245 ] && [ $TOTAL_MIN -le 1290 ]; then
+              # 20:45 - 21:30 UTC window (Targets 21:10 UTC / 22:10 WAT)
+              SELECTED_MODE="EOD"
+            elif [ $TOTAL_MIN -ge 1291 ] && [ $TOTAL_MIN -le 1439 ]; then
+              # 21:31 - 23:59 UTC window (Targets 21:45 UTC / 22:45 WAT)
+              SELECTED_MODE="ASIA"
+            fi
           fi
 
           echo "MODE=$SELECTED_MODE" >> $GITHUB_ENV
@@ -70,11 +106,11 @@ jobs:
         run: |
           python main.py --mode ${{ env.MODE }}
 
-      - name: Commit Updated CSV Setup Logs
+      - name: Commit Updated CSV Setup Logs and Memory Cache
         if: always()
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action Bot"
-          git add setups_log.csv || true
-          git commit -m "Auto-update trade setups log [skip ci]" || true
+          git add setups_log.csv last_report.txt || true
+          git commit -m "Auto-update trade setups log and state cache [skip ci]" || true
           git push || true
